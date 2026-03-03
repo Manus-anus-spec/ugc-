@@ -1,0 +1,81 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-serif: "Playfair Display", serif;
+}
+
+@layer base {
+  body {
+    @apply antialiased;
+  }
+}
+
+/* Markdown Styles */
+.markdown-body {
+  @apply text-[#141414] leading-relaxed;
+}
+
+.markdown-body h2 {
+  @apply text-2xl font-serif italic mt-12 mb-6 border-b border-[#141414] pb-2;
+}
+
+.markdown-body h3 {
+  @apply text-lg font-mono uppercase tracking-widest font-bold mt-8 mb-4 flex items-center gap-2;
+}
+
+.markdown-body h3::before {
+  content: "→";
+  @apply text-[#141414] opacity-40;
+}
+
+.markdown-body p {
+  @apply mb-4;
+}
+
+.markdown-body ul {
+  @apply list-none pl-0 mb-6 space-y-2;
+}
+
+.markdown-body li {
+  @apply flex items-start gap-3;
+}
+
+.markdown-body li::before {
+  content: "•";
+  @apply text-[#141414] opacity-30 mt-0.5;
+}
+
+.markdown-body table {
+  @apply w-full border-collapse border border-[#141414] my-8 font-mono text-[11px];
+}
+
+.markdown-body th {
+  @apply bg-[#141414] text-[#E4E3E0] p-3 text-left uppercase tracking-wider;
+}
+
+.markdown-body td {
+  @apply border border-[#141414] p-3;
+}
+
+.markdown-body tr:nth-child(even) {
+  @apply bg-[#141414]/5;
+}
+
+.markdown-body strong {
+  @apply font-bold;
+}
+
+.markdown-body blockquote {
+  @apply border-l-4 border-[#141414] pl-6 py-2 italic my-6 bg-[#141414]/5;
+}
+
+.markdown-body code {
+  @apply bg-[#141414]/5 px-1.5 py-0.5 rounded font-mono text-[0.9em];
+}
+
+.markdown-body pre {
+  @apply bg-[#141414] text-[#E4E3E0] p-6 rounded-sm my-6 overflow-x-auto font-mono text-xs leading-loose;
+}

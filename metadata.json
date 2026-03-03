@@ -1,0 +1,5 @@
+{
+  "name": "UGC Reverse-Engineer",
+  "description": "Analyze UGC videos to generate precise AI prompts and structural breakdowns for recreation.",
+  "requestFramePermissions": []
+}
