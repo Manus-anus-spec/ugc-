@@ -3,8 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef, useCallback } from 'react';
-import { GoogleGenAI } from "@google/genai";
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { 
   Upload, 
   Video, 
@@ -19,6 +18,10 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+
+// --- Config ---
+const PROXY_URL = import.meta.env.VITE_PROXY_URL || 'https://ugc-worker.khian-moclou.workers.dev';
 
 // --- Types ---
 interface AnalysisResult {
@@ -157,8 +160,22 @@ export default function App() {
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState(0);
+  const [serverReady, setServerReady] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Wake up the Render backend on page load to avoid cold start delays
+  useEffect(() => {
+    const wakeServer = async () => {
+      try {
+        await fetch(`${PROXY_URL}/`, { signal: AbortSignal.timeout(60000) });
+        setServerReady(true);
+      } catch (_) {
+        setServerReady(true); // proceed anyway
+      }
+    };
+    wakeServer();
+  }, []);
 
   const ANALYSIS_STEPS = [
     "Reading video data",
@@ -206,53 +223,39 @@ export default function App() {
     setCurrentStep(0);
 
     try {
-      // Step 0: Read file
-      const reader = new FileReader();
-      const base64Promise = new Promise<string>((resolve) => {
-        reader.onload = () => {
-          const base64 = (reader.result as string).split(',')[1];
-          resolve(base64);
-        };
-      });
-      reader.readAsDataURL(videoFile);
-      const base64Data = await base64Promise;
-      
-      // Step 1: Uploading
-      setCurrentStep(1);
-      
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      
-      // Step 2: Deep AI Analysis
-      setCurrentStep(2);
-      const model = ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
-        contents: [
-          {
-            parts: [
-              { text: "Analyze this UGC video and provide the reverse-engineering breakdown as specified in your instructions." },
-              {
-                inlineData: {
-                  mimeType: videoFile.type,
-                  data: base64Data
-                }
-              }
-            ]
-          }
-        ],
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          temperature: 0.2,
-        }
-      });
+      // Step 0: Prepare file
+      setCurrentStep(0);
 
-      const response = await model;
-      
+      // Step 1: Upload to proxy server
+      setCurrentStep(1);
+      const formData = new FormData();
+      formData.append('video', videoFile, videoFile.name);
+
+      // Step 2: Deep AI Analysis (proxy handles upload + Gemini call)
+      setCurrentStep(2);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 minute timeout
+      const response = await fetch(`${PROXY_URL}/analyze`, {
+        method: 'POST',
+        body: formData,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Server error: ${response.status}`);
+      }
+
+      const data = await response.json();
+
       // Step 3: Finalizing
       setCurrentStep(3);
-      setResult(response.text || "No analysis generated.");
+      setResult(data.result || 'No analysis generated.');
+
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "An error occurred during analysis.");
+      setError(err.message || 'An error occurred during analysis.');
     } finally {
       setIsAnalyzing(false);
     }
@@ -292,7 +295,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <main className="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* Left Column: Upload & Preview */}
         <div className="lg:col-span-5 space-y-6">
           <section className="bg-white border border-[#141414] p-1 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
@@ -341,6 +344,9 @@ export default function App() {
                     <span className="text-[10px] font-mono opacity-50">{(videoFile!.size / (1024 * 1024)).toFixed(2)} MB</span>
                   </div>
 
+                  {!serverReady && (
+                    <p className="text-[10px] font-mono text-center opacity-50 animate-pulse">⏳ Waking up server... (first load may take ~30s)</p>
+                  )}
                   <button 
                     onClick={analyzeVideo}
                     disabled={isAnalyzing}
@@ -411,7 +417,7 @@ export default function App() {
 
         {/* Right Column: Results */}
         <div className="lg:col-span-7">
-          <section className="bg-white border border-[#141414] min-h-[600px] flex flex-col shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+          <section className="bg-white border border-[#141414] flex flex-col shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
             <div className="border-b border-[#141414] p-4 flex justify-between items-center bg-[#141414]/5">
               <div className="flex items-center gap-2">
                 <FileText className="w-4 h-4" />
@@ -428,7 +434,7 @@ export default function App() {
               )}
             </div>
 
-            <div className="flex-1 p-8 overflow-y-auto max-h-[800px]">
+            <div className="p-8">
               {!result && !isAnalyzing && (
                 <div className="h-full flex flex-col items-center justify-center text-center opacity-20">
                   <FileText className="w-16 h-16 mb-4" />
@@ -455,7 +461,7 @@ export default function App() {
                   className="prose prose-sm max-w-none prose-headings:font-serif prose-headings:italic prose-headings:border-b prose-headings:border-[#141414]/10 prose-headings:pb-2 prose-p:font-sans prose-p:text-[#141414]/80 prose-li:text-[#141414]/80"
                 >
                   <div className="markdown-body">
-                    <Markdown>{result}</Markdown>
+                    <Markdown remarkPlugins={[remarkGfm]}>{result}</Markdown>
                   </div>
                 </motion.div>
               )}
