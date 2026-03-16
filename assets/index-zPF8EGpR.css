@@ -10,3 +10,10 @@
 .retry-all-btn{background:rgba(0,212,180,.15);color:#00d4b4;border:1px solid rgba(0,212,180,.3)}
 .retry-all-btn:hover:not(:disabled){background:rgba(0,212,180,.28)}
 .retry-missing-btn:disabled,.retry-all-btn:disabled{opacity:.5;cursor:not-allowed}
+
+/* Frame thumbnail feature */
+.frame-thumb-container{display:flex;align-items:flex-start;gap:10px;padding:10px 14px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+.frame-thumb{width:120px;height:auto;border-radius:6px;border:1px solid rgba(255,255,255,.15);flex-shrink:0;object-fit:cover;cursor:pointer}
+.frame-thumb:hover{border-color:rgba(255,255,255,.4)}
+.frame-download-btn{display:flex;align-items:center;gap:5px;padding:5px 10px;font-size:11px;font-family:inherit;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.15);border-radius:5px;color:rgba(255,255,255,.7);cursor:pointer;transition:all .15s;white-space:nowrap;margin-top:4px}
+.frame-download-btn:hover{background:rgba(255,255,255,.13);color:#fff;border-color:rgba(255,255,255,.3)}
