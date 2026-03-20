@@ -156,6 +156,8 @@ IMPORTANT RULES:
 export default function App() {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoPreview, setVideoPreview] = useState<string | null>(null);
+  const [videoUrl, setVideoUrl] = useState<string>('');
+  const [inputMode, setInputMode] = useState<'upload' | 'url'>('upload');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -215,21 +217,49 @@ export default function App() {
     }
   };
 
+  const isValidUrl = (url: string): boolean => {
+    try {
+      const urlObj = new URL(url);
+      const hostname = urlObj.hostname.toLowerCase();
+      return (
+        hostname.includes('youtube.com') || 
+        hostname.includes('youtu.be') ||
+        hostname.includes('tiktok.com') ||
+        hostname.includes('vm.tiktok.com') ||
+        hostname.includes('vt.tiktok.com') ||
+        hostname.includes('pinterest.com') ||
+        hostname.includes('pin.it')
+      );
+    } catch {
+      return false;
+    }
+  };
+
   const analyzeVideo = async () => {
-    if (!videoFile) return;
+    if (inputMode === 'upload' && !videoFile) return;
+    if (inputMode === 'url' && !videoUrl) return;
+    if (inputMode === 'url' && !isValidUrl(videoUrl)) {
+      setError('Please enter a valid YouTube, TikTok, or Pinterest URL.');
+      return;
+    }
 
     setIsAnalyzing(true);
     setError(null);
     setCurrentStep(0);
 
     try {
-      // Step 0: Prepare file
+      // Step 0: Prepare data
       setCurrentStep(0);
 
       // Step 1: Upload to proxy server
       setCurrentStep(1);
       const formData = new FormData();
-      formData.append('video', videoFile, videoFile.name);
+      
+      if (inputMode === 'upload') {
+        formData.append('video', videoFile!, videoFile!.name);
+      } else {
+        formData.append('url', videoUrl);
+      }
 
       // Step 2: Deep AI Analysis (proxy handles upload + Gemini call)
       setCurrentStep(2);
@@ -269,6 +299,7 @@ export default function App() {
   const reset = () => {
     setVideoFile(null);
     setVideoPreview(null);
+    setVideoUrl('');
     setResult(null);
     setError(null);
   };
@@ -300,9 +331,39 @@ export default function App() {
         <div className="lg:col-span-5 space-y-6">
           <section className="bg-white border border-[#141414] p-1 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
             <div className="border border-[#141414] p-6">
-              <h2 className="font-serif italic text-lg mb-4">Reference Video</h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="font-serif italic text-lg">Reference Video</h2>
+                <div className="flex gap-2 bg-[#141414]/5 p-1 rounded">
+                  <button
+                    onClick={() => {
+                      setInputMode('upload');
+                      reset();
+                    }}
+                    className={`px-3 py-1 text-xs font-mono uppercase tracking-widest transition-all ${
+                      inputMode === 'upload'
+                        ? 'bg-[#141414] text-[#E4E3E0]'
+                        : 'text-[#141414] hover:bg-[#141414]/10'
+                    }`}
+                  >
+                    Upload
+                  </button>
+                  <button
+                    onClick={() => {
+                      setInputMode('url');
+                      reset();
+                    }}
+                    className={`px-3 py-1 text-xs font-mono uppercase tracking-widest transition-all ${
+                      inputMode === 'url'
+                        ? 'bg-[#141414] text-[#E4E3E0]'
+                        : 'text-[#141414] hover:bg-[#141414]/10'
+                    }`}
+                  >
+                    Paste URL
+                  </button>
+                </div>
+              </div>
               
-              {!videoPreview ? (
+              {inputMode === 'upload' && !videoPreview ? (
                 <div 
                   onDragOver={onDragOver}
                   onDrop={onDrop}
@@ -320,7 +381,7 @@ export default function App() {
                     className="hidden" 
                   />
                 </div>
-              ) : (
+              ) : inputMode === 'upload' && videoPreview ? (
                 <div className="space-y-4">
                   <div className="relative aspect-video bg-black border border-[#141414]">
                     <video 
@@ -365,7 +426,38 @@ export default function App() {
                     )}
                   </button>
                 </div>
-              )}
+              ) : inputMode === 'url' && !videoUrl ? (
+                <div className="space-y-4">
+                  <input
+                    type="text"
+                    value={videoUrl}
+                    onChange={(e) => setVideoUrl(e.target.value)}
+                    placeholder="Paste YouTube Shorts, TikTok, or Pinterest link..."
+                    className="w-full px-4 py-3 border border-[#141414] font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
+                  />
+                  <p className="text-[10px] opacity-60 font-mono">Supported: YouTube Shorts, TikTok videos, Pinterest pins with video</p>
+                  {!serverReady && (
+                    <p className="text-[10px] font-mono text-center opacity-50 animate-pulse">⏳ Waking up server... (first load may take ~30s)</p>
+                  )}
+                  <button 
+                    onClick={analyzeVideo}
+                    disabled={isAnalyzing || !videoUrl || !isValidUrl(videoUrl)}
+                    className="w-full bg-[#141414] text-[#E4E3E0] py-4 flex items-center justify-center gap-3 hover:bg-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed transition-all uppercase tracking-widest text-sm font-bold"
+                  >
+                    {isAnalyzing ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Analyzing...
+                      </>
+                    ) : (
+                      <>
+                        Start Analysis
+                        <ArrowRight className="w-5 h-5" />
+                      </>
+                    )}
+                  </button>
+                </div>
+              ) : null}
             </div>
           </section>
 
