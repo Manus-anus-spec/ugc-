@@ -30,6 +30,7 @@ import remarkGfm from 'remark-gfm';
 // --- Config ---
 const PROXY_URL = import.meta.env.VITE_PROXY_URL || 'https://ugc-worker.khian-moclou.workers.dev';
 const LIBRARY_URL = 'https://sav-viral-scanner.khian-moclou.workers.dev';
+const CONTENT_LIBRARY_URL = 'https://sav-content-library.khian-moclou.workers.dev';
 
 // --- Types ---
 interface LibraryItem {
@@ -75,6 +76,36 @@ async function apiSaveItem(item: LibraryItem): Promise<void> {
 async function apiDeleteItem(id: string): Promise<void> {
   const res = await fetch(`${LIBRARY_URL}/library/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error('Failed to delete item');
+}
+
+async function apiPushToContentLibrary(item: LibraryItem): Promise<void> {
+  try {
+    await fetch(`${CONTENT_LIBRARY_URL}/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: `UGC-${item.id}`,
+        name: item.hookText,
+        source_url: item.sourceUrl || '',
+        category: item.formatType,
+        tags: [item.formatType],
+        nb_prompt: item.savPrompts?.nbPrompt || item.nbPrompt || '',
+        sd_prompt: item.savPrompts?.sdPrompt || '',
+        kling_prompt: item.savPrompts?.klingPrompt || item.klingPrompt || '',
+        hook_analysis: item.hookText,
+        caption_options: item.savPrompts?.caption ? [item.savPrompts.caption] : [],
+        raw: {
+          fullAnalysis: item.fullAnalysis,
+          formatType: item.formatType,
+          textOverlays: item.savPrompts?.textOverlays || [],
+          whyItWorks: item.savPrompts?.whyItWorks || '',
+          creativeBrief: item.savPrompts?.creativeBrief || '',
+        },
+      }),
+    });
+  } catch (e) {
+    console.warn('Content Library push failed (non-blocking):', e);
+  }
 }
 
 async function apiGenerateSavIdea(analysis: string): Promise<SavPrompts> {
@@ -520,7 +551,30 @@ export default function App() {
       }
       const data = await response.json();
       setCurrentStep(3);
-      setResult(data.result || 'No analysis generated.');
+      const analysisResult = data.result || 'No analysis generated.';
+      setResult(analysisResult);
+
+      // Auto-save to both libraries
+      try {
+        const formatType = detectFormatType(analysisResult);
+        const autoItem: LibraryItem = {
+          id: Date.now().toString(),
+          savedAt: new Date().toISOString(),
+          sourceUrl: inputMode === 'url' ? videoUrl : undefined,
+          formatType,
+          hookText: extractHookText(analysisResult),
+          fullAnalysis: analysisResult,
+          nbPrompt: extractNBPrompt(analysisResult),
+          klingPrompt: extractKlingPrompt(analysisResult),
+        };
+        await apiSaveItem(autoItem);
+        setLibrary((prev) => [autoItem, ...prev]);
+        await apiPushToContentLibrary(autoItem);
+        setSavedToast(true);
+        setTimeout(() => setSavedToast(false), 2500);
+      } catch (saveErr) {
+        console.warn('Auto-save failed (non-blocking):', saveErr);
+      }
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'An error occurred during analysis.');
@@ -587,6 +641,7 @@ export default function App() {
       const savPrompts = await apiGenerateSavIdea(item.fullAnalysis);
       const updated: LibraryItem = { ...item, savPrompts };
       await apiSaveItem(updated);
+      await apiPushToContentLibrary(updated);
       setLibrary((prev) => prev.map((i) => i.id === id ? updated : i));
       setExpandedId(id);
     } catch (e: any) {
