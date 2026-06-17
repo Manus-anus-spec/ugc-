@@ -148,38 +148,71 @@ function extractSection(markdown: string, sectionNum: number): string {
 }
 
 function extractNBPrompt(analysis: string): string {
+  // Try nano-banana code block first
   const match = analysis.match(/```nano-banana\n([\s\S]*?)```/);
   if (match) return match[1].trim();
-  const section7 = extractSection(analysis, 7);
-  const codeMatch = section7.match(/```[\w-]*\n([\s\S]*?)```/);
-  return codeMatch ? codeMatch[1].trim() : '';
+  // Try any code block in prompts section (section 7 or 13)
+  for (const secNum of [13, 7]) {
+    const section = extractSection(analysis, secNum);
+    if (section) {
+      const codeMatch = section.match(/```[\w-]*\n([\s\S]*?)```/);
+      if (codeMatch) return codeMatch[1].trim();
+    }
+  }
+  // Try finding NB prompt by label
+  const nbLabel = analysis.match(/(?:Nano Banana|NB|Image)[^:]*Prompt[^:]*:?\s*\n([\s\S]*?)(?=\n##|\n\*\*.*(?:Kling|Motion|Video))/i);
+  if (nbLabel) return nbLabel[1].trim();
+  return '';
 }
 
 function extractKlingPrompt(analysis: string): string {
+  // Try code blocks (second block is usually Kling)
   const allBlocks = [...analysis.matchAll(/```[\w-]*\n([\s\S]*?)```/g)];
   if (allBlocks.length >= 2) return allBlocks[1][1].trim();
   if (allBlocks.length === 1) return allBlocks[0][1].trim();
+  // Try finding Kling prompt by label in section 13 or 7
+  for (const secNum of [13, 7]) {
+    const section = extractSection(analysis, secNum);
+    if (section) {
+      const klingMatch = section.match(/(?:Kling|Motion)[^:]*Prompt[^:]*:?\s*\n([\s\S]*?)(?=\n##|\n\*\*.*(?:Nano|NB|Image)|$)/i);
+      if (klingMatch) return klingMatch[1].trim();
+    }
+  }
   return '';
 }
 
 function extractHookText(analysis: string): string {
-  const section10 = extractSection(analysis, 10);
-  const match = section10.match(/\*\*Visual Hook:\*\*\s*(.+)/);
-  if (match) return match[1].trim();
-  const scrollMatch = section10.match(/\*\*Would You Stop Scrolling:\*\*\s*(.+)/);
-  return scrollMatch ? scrollMatch[1].trim() : 'No hook extracted';
+  // Try section 12 first (new format), then section 10 (old format)
+  for (const secNum of [12, 10]) {
+    const section = extractSection(analysis, secNum);
+    if (section) {
+      const match = section.match(/\*\*Visual Hook:\*\*\s*(.+)/);
+      if (match) return match[1].trim();
+      const scrollMatch = section.match(/\*\*Would You Stop Scrolling:\*\*\s*(.+)/);
+      if (scrollMatch) return scrollMatch[1].trim();
+      const patternMatch = section.match(/\*\*Pattern Interrupt:\*\*\s*(.+)/);
+      if (patternMatch) return patternMatch[1].trim();
+    }
+  }
+  return 'No hook extracted';
 }
 
 function detectFormatType(analysis: string): string {
   const lower = analysis.toLowerCase();
-  if (lower.includes('gray beard') || lower.includes('older men') || lower.includes('hiring a boyfriend') || lower.includes('icp')) return 'ICP Targeting';
-  if (lower.includes('before') && lower.includes('after') || lower.includes('transformation') || lower.includes('transition reel')) return 'Transformation';
+  // Check Ad Type Classification section first (section 2)
+  const s2 = extractSection(analysis, 2).toLowerCase();
+  if (s2.includes('skit') || s2.includes('montage')) {
+    if (lower.includes('before') && lower.includes('after') || lower.includes('transformation') || lower.includes('transition')) return 'Transformation';
+  }
+  if (lower.includes('gray beard') || lower.includes('gray hair') || lower.includes('older men') || lower.includes('older guys') || lower.includes('hiring a boyfriend') || lower.includes('icp') || lower.includes('mature men')) return 'ICP Targeting';
+  if (lower.includes('before') && lower.includes('after') || lower.includes('transformation') || lower.includes('transition reel') || lower.includes('outfit reveal')) return 'Transformation';
   if (lower.includes("he's not controlling") || lower.includes('protecting') || lower.includes('pick-me') || lower.includes('pick me')) return 'Pick-Me Static';
   if (lower.includes('dirty talk') || lower.includes('kinky') || lower.includes('suggestive talk')) return 'Dirty Talking';
   if (lower.includes('send this to') || lower.includes('tag the') || lower.includes('share farming')) return 'Share Farming';
-  if (lower.includes('choose one') || lower.includes('binary choice') || lower.includes('poll') || lower.includes('comment') && lower.includes('farming')) return 'Comment Farming';
-  if (lower.includes('danc') || lower.includes('trending audio') || lower.includes('motion control')) return 'Dancing/Motion';
+  if (lower.includes('choose one') || lower.includes('binary choice') || lower.includes('poll') || (lower.includes('comment') && lower.includes('farming'))) return 'Comment Farming';
+  if (lower.includes('danc') || lower.includes('trending audio') || lower.includes('motion control') || lower.includes('choreograph')) return 'Dancing/Motion';
   if (lower.includes('controver') || lower.includes('unpopular opinion')) return 'Controversial Static';
+  if (lower.includes('gym') || lower.includes('workout') || lower.includes('fitness')) return 'General Lifestyle';
   return 'General Lifestyle';
 }
 
