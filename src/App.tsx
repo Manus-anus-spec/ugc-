@@ -43,17 +43,28 @@ interface LibraryItem {
   nbPrompt: string;
   klingPrompt: string;
   savPrompts?: SavPrompts;
+  thumbnail?: string;
+  isOneShot?: boolean;
+  duration?: string;
+  clipCount?: number;
+  sdPrompt?: string;
+  sdFrameType?: string;
 }
 
 interface SavPrompts {
   nbPrompt: string;
   sdPrompt?: string;
+  sdFrameType?: string;
   klingPrompt: string;
+  seedancePrompt?: string;
+  seedanceCharCount?: number;
   textOverlays: string[];
   caption: string;
+  hashtags?: string[];
   formulaExtracted?: string;
   whyItWorks?: string;
   creativeBrief?: string;
+  faceForwardNote?: string;
 }
 
 // --- Library API (Cloudflare KV via sav-viral-scanner worker) ---
@@ -108,11 +119,11 @@ async function apiPushToContentLibrary(item: LibraryItem): Promise<void> {
   }
 }
 
-async function apiGenerateSavIdea(analysis: string): Promise<SavPrompts> {
+async function apiGenerateSavIdea(item: LibraryItem): Promise<SavPrompts> {
   const res = await fetch(`${LIBRARY_URL}/generate-sav-idea`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ analysis }),
+    body: JSON.stringify({ item }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({})) as { error?: string };
@@ -122,21 +133,32 @@ async function apiGenerateSavIdea(analysis: string): Promise<SavPrompts> {
     formulaExtracted?: string;
     whyItWorks?: string;
     creativeBrief?: string;
+    faceForwardNote?: string;
     nbPrompt?: string;
     sdPrompt?: string;
+    sdFrameType?: string;
+    seedancePrompt?: string;
+    seedanceCharCount?: number;
     klingPrompt?: string;
+    klingCharCount?: number;
     textOverlays?: string[];
     caption?: string;
+    hashtags?: string[];
   };
   return {
     nbPrompt: data.nbPrompt || '',
     sdPrompt: data.sdPrompt || '',
+    sdFrameType: data.sdFrameType || '',
     klingPrompt: data.klingPrompt || '',
+    seedancePrompt: data.seedancePrompt || '',
+    seedanceCharCount: data.seedanceCharCount,
     textOverlays: data.textOverlays || [],
     caption: data.caption || '',
+    hashtags: data.hashtags || [],
     formulaExtracted: data.formulaExtracted,
     whyItWorks: data.whyItWorks,
     creativeBrief: data.creativeBrief,
+    faceForwardNote: data.faceForwardNote,
   };
 }
 
@@ -182,19 +204,42 @@ function extractKlingPrompt(analysis: string): string {
 }
 
 function extractHookText(analysis: string): string {
-  // Try section 12 first (new format), then section 10 (old format)
-  for (const secNum of [12, 10]) {
+  // Try multiple section numbers and patterns
+  for (const secNum of [12, 10, 8, 6]) {
     const section = extractSection(analysis, secNum);
     if (section) {
-      const match = section.match(/\*\*Visual Hook:\*\*\s*(.+)/);
-      if (match) return match[1].trim();
-      const scrollMatch = section.match(/\*\*Would You Stop Scrolling:\*\*\s*(.+)/);
-      if (scrollMatch) return scrollMatch[1].trim();
-      const patternMatch = section.match(/\*\*Pattern Interrupt:\*\*\s*(.+)/);
-      if (patternMatch) return patternMatch[1].trim();
+      const patterns = [
+        /\*\*Visual Hook:\*\*\s*(.+)/,
+        /\*\*Would You Stop Scrolling:\*\*\s*(.+)/,
+        /\*\*Pattern Interrupt:\*\*\s*(.+)/,
+        /\*\*Hook:\*\*\s*(.+)/,
+        /\*\*Visual:\*\*\s*(.+)/,
+        /\*\*First Frame:\*\*\s*(.+)/,
+      ];
+      for (const pattern of patterns) {
+        const match = section.match(pattern);
+        if (match) return match[1].trim().replace(/^["']|["']$/g, '');
+      }
     }
   }
+  // Fallback: grab first meaningful line after any "hook" heading
+  const hookMatch = analysis.match(/hook[^]*?\n[-*]\s*\*\*[^:]+:\*\*\s*(.+)/i);
+  if (hookMatch) return hookMatch[1].trim().replace(/^["']|["']$/g, '');
+  // Last resort: use first sentence of the analysis as summary
+  const firstLine = analysis.match(/##\s*1\.[^]*?\n[-*]\s*\*\*Type:\*\*\s*(.+)/);
+  if (firstLine) return firstLine[1].trim();
   return 'No hook extracted';
+}
+
+function extractVideoMeta(analysis: string): { isOneShot: boolean; duration: string; clipCount: number } {
+  const section = extractSection(analysis, 1);
+  const lower = section.toLowerCase();
+  const isOneShot = lower.includes('one shot') || lower.includes('single shot') || lower.includes('single continuous') || (!lower.includes('multi') && !lower.includes('edited'));
+  const durationMatch = section.match(/\*\*(?:Total )?Duration:\*\*\s*[~]?(\d+[\s-]*\d*)\s*(?:seconds|s\b)/i);
+  const duration = durationMatch ? durationMatch[1].trim() + 's' : '';
+  const cutsMatch = section.match(/\*\*(?:Number of )?Cuts:\*\*\s*(\d+)/i);
+  const clipCount = cutsMatch ? parseInt(cutsMatch[1]) + 1 : (isOneShot ? 1 : 0);
+  return { isOneShot, duration, clipCount };
 }
 
 function detectFormatType(analysis: string): string {
@@ -279,26 +324,85 @@ const FORMAT_CAPTIONS: Record<string, string> = {
 
 const SAV_NB_RULES = `Match the uploaded reference image face exactly — do not alter facial features, face shape, skin tone, freckles, or hair. No under-eye bags, no eye creases, no forehead lines, no nasolabial folds. Zero signs of aging. NOT professional photography. No phone visible in frame, no device in hand. She is completely alone. No other person, no figure visible anywhere in frame or mirror reflection.`;
 
-function buildSavNBPrompt(rawNB: string): string {
-  let prompt = rawNB;
-  // Strip conflicting character description language
-  prompt = prompt.replace(/\b(brunette|redhead|dark hair|light hair|brown eyes|blue eyes|green eyes|pale skin|dark skin|tan skin|age\s+\d+|in her \d+s)[^.]*\./gi, '');
-  // Ensure opening
-  if (!prompt.toLowerCase().startsWith('refer to the girl')) {
-    prompt = 'Refer to the girl in the reference images. ' + prompt;
+function buildSavNBPrompt(rawAnalysis: string): string {
+  // Extract NB prompt from analysis
+  let prompt = '';
+  const nbMatch = rawAnalysis.match(/(?:NB|Nano Banana|Image)[^:]*Prompt[^:]*:?\s*\n([\s\S]*?)(?=\n##|\n\*\*.*(?:Kling|Motion|Video|SD|Seedream))/i);
+  if (nbMatch) {
+    prompt = nbMatch[1].trim();
   }
-  // Ensure Raw iPhone aesthetic
-  if (!prompt.toLowerCase().includes('raw iphone')) {
-    prompt = prompt.replace('Refer to the girl in the reference images.', 'Refer to the girl in the reference images. Raw iPhone footage aesthetic.');
+  if (!prompt) return '';
+
+  // Strip character description blocks (face sheet handles all of this)
+  prompt = prompt.replace(/\b\d+\s*years?\s*old\b/gi, '');
+  prompt = prompt.replace(/\bhalf[- ]brazilian\b/gi, '');
+  prompt = prompt.replace(/\bplatinum blonde\b/gi, '');
+  prompt = prompt.replace(/\b(caucasian|latina|european|american|brazilian)\b/gi, '');
+  prompt = prompt.replace(/\b(green|blue|hazel|brown)\s+eyes?\b/gi, '');
+  prompt = prompt.replace(/\bin her (early |mid |late )?\d+s\b/gi, '');
+
+  // Strip banned NB phrases
+  prompt = prompt.replace(/\bwide rounded hips\b/gi, '');
+  prompt = prompt.replace(/\bbrazilian hourglass\b/gi, '');
+  prompt = prompt.replace(/\bmid-laugh[,]?\s*head tilted back\b/gi, '');
+  prompt = prompt.replace(/\bring light\b/gi, 'warm lamp light');
+
+  // Ensure opener exists
+  if (!prompt.toLowerCase().includes('refer to the girl in the reference images')) {
+    prompt = 'Refer to the girl in the reference images. Raw iPhone footage aesthetic. ' + prompt;
   }
-  // Replace or append Sav rules
-  if (prompt.includes('NOT professional photography')) {
-    // Already has closer — replace from that point
-    prompt = prompt.replace(/NOT professional photography[\s\S]*$/, SAV_NB_RULES);
-  } else {
-    prompt = prompt.trim() + ' ' + SAV_NB_RULES;
+
+  // Ensure makeup block exists (check for any makeup indicator)
+  const hasMakeup = /foundation|mascara|eyeliner|contoured|brows/i.test(prompt);
+  if (!hasMakeup) {
+    // Insert civilian makeup before the closer
+    const makeupBlock = 'Light-medium coverage foundation, softly contoured cheekbones, defined natural brows, individual lashes, mascara, soft nude gloss lip.';
+    const closerIdx = prompt.indexOf('She is completely alone');
+    if (closerIdx > 0) {
+      prompt = prompt.slice(0, closerIdx) + makeupBlock + ' ' + prompt.slice(closerIdx);
+    } else {
+      prompt += ' ' + makeupBlock;
+    }
   }
-  return prompt.trim();
+
+  // Ensure cheekbone contour (feedback rule)
+  if (!prompt.toLowerCase().includes('contoured cheekbones')) {
+    prompt = prompt.replace(/foundation,/i, 'foundation, softly contoured cheekbones,');
+  }
+
+  // Ensure safety line exists
+  if (!prompt.toLowerCase().includes('completely alone')) {
+    prompt += ' She is completely alone. No other person, no figure visible anywhere in frame or mirror reflection.';
+  }
+
+  // Ensure face match closer exists
+  if (!prompt.toLowerCase().includes('match the uploaded reference image face exactly')) {
+    prompt += ' Match the uploaded reference image face exactly — do not alter facial features, face shape, skin tone, freckles, or hair. No under-eye bags, no eye creases, no forehead lines, no nasolabial folds. Zero signs of aging. NOT professional photography. No phone visible in frame, no device in hand.';
+  }
+
+  // Clean up double spaces
+  prompt = prompt.replace(/\s{2,}/g, ' ').trim();
+
+  return prompt;
+}
+
+function extractSDPrompt(rawAnalysis: string): string {
+  const sdMatch = rawAnalysis.match(/(?:SD|Seedream)[^:]*Prompt[^:]*:?\s*\n([\s\S]*?)(?=\n##|\n\*\*.*(?:Kling|Video|Motion|QA|Caption))/i);
+  if (sdMatch) {
+    let prompt = sdMatch[1].trim();
+    // Strip banned SD phrases
+    const sdBanned = ['wide rounded hips', 'Brazilian hourglass', 'warm golden-olive', 'natural matte finish', 'fabric pulling tight', 'tighten fit'];
+    for (const banned of sdBanned) {
+      prompt = prompt.replace(new RegExp(banned, 'gi'), '');
+    }
+    return prompt.replace(/\s{2,}/g, ' ').trim();
+  }
+  return '';
+}
+
+function extractSDFrameType(rawAnalysis: string): string {
+  const match = rawAnalysis.match(/sdFrameType["\s:]+([A-Z_]+)/);
+  return match ? match[1] : 'FULL_FRONT';
 }
 
 function buildSavKlingPrompt(rawKling: string): string {
@@ -312,7 +416,7 @@ function buildSavKlingPrompt(rawKling: string): string {
 
 function generateSavPrompts(item: LibraryItem): SavPrompts {
   return {
-    nbPrompt: buildSavNBPrompt(item.nbPrompt),
+    nbPrompt: buildSavNBPrompt(item.fullAnalysis),
     klingPrompt: buildSavKlingPrompt(item.klingPrompt),
     textOverlays: FORMAT_OVERLAYS[item.formatType] || FORMAT_OVERLAYS['General Lifestyle'],
     caption: FORMAT_CAPTIONS[item.formatType] || FORMAT_CAPTIONS['General Lifestyle'],
@@ -400,22 +504,22 @@ Target: 600-1200 characters. DO NOT compress or summarize.
 Write prompts that recreate EVERY movement from the reference video with frame-level precision.
 
 KLING PROMPT MUST INCLUDE:
-- HEADER: "Shot on iPhone front-facing camera, static locked-off camera, no camera movement, no zoom, no pan, no tilt."
-- SEQUENTIAL ACTION CHAIN: Describe every movement in exact chronological order. Include: body part, direction, speed/quality, hands (even when idle), duration of each action, transitions, and micro-movements (sway, breath, fidget).
+- SEQUENTIAL ACTION CHAIN: Describe every movement using ACTION VERBS. Use verbs like: adjusts, sips, walks, sits, looks, turns, reaches, raises, tilts, runs, taps, pulls, mouths, blinks, sways, steps, dances, brushes, nods, bites, crosses, leans, arches, rocks.
 - EXPRESSION & ENERGY: Describe the FEELING (e.g., "radiating quiet confidence"), eye behavior (contact, glances), and mouth behavior (lips part, smile, mouths words).
-- PACING: Note rhythm changes, pauses/holds, and audio sync.
 - CLOSER: End with total duration: "[X] seconds."
 
 FORMAT RULES:
-- For ONE SHOT: One single prompt (1500-2500 characters).
-- For MULTI-CLIP: One prompt per clip (400-800 characters each).
+- For ONE SHOT: One single prompt, 230-310 characters MAX. This is critical — Kling works best with SHORT prompts.
+- For MULTI-CLIP: One prompt per clip (200-300 characters each).
+- Structure: [where + outfit] + [ONE primary action] + [expression] + [environment detail] + [camera type]
 
-CRITICAL KLING RULES:
+CRITICAL KLING RULES — MUST FOLLOW:
+- NEVER use "slowly", "gently", "deliberately", "carefully", "softly" — these cause SLOW MOTION output. Use normal-speed action verbs instead.
 - NEVER say "she poses" or "she adjusts" — describe the EXACT physical movement.
-- NEVER skip what hands are doing.
-- NEVER use vague timing — every action gets a duration.
-- ALWAYS describe transitions.
-- ALWAYS include at least one micro-movement per 3 seconds.
+- NEVER exceed 310 characters for a single prompt — Kling ignores long prompts.
+- ONE primary action per prompt, not 5.
+- Camera type ALWAYS at the end: "friend-filmed handheld subtle shake" or "selfie angle natural micro-shake" or "placed camera at hip height"
+- NEVER use: "slow", "gentle", "deliberate", "subtle" more than once total.
 - If talking, note "lips moving naturally as if speaking" in the sequence.
 
 OUTPUT FORMAT: Wrap in a code block and include character count.
@@ -460,6 +564,7 @@ export default function App() {
   // Analyze state
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoPreview, setVideoPreview] = useState<string | null>(null);
+  const [refFrames, setRefFrames] = useState<{start: string; middle: string; end: string} | null>(null);
   const [videoUrl, setVideoUrl] = useState<string>('');
   const [inputMode, setInputMode] = useState<'upload' | 'url'>('upload');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -480,6 +585,84 @@ export default function App() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Extract first frame thumbnail from video file
+  const extractThumbnail = (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.muted = true;
+      video.playsInline = true;
+      const url = URL.createObjectURL(file);
+      video.src = url;
+      video.onloadeddata = () => {
+        video.currentTime = 0.1;
+      };
+      video.onseeked = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 180;
+        canvas.height = 320;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', 0.7));
+        } else {
+          resolve('');
+        }
+        URL.revokeObjectURL(url);
+      };
+      video.onerror = () => {
+        resolve('');
+        URL.revokeObjectURL(url);
+      };
+    });
+  };
+
+  const extractRefFrames = (file: File): Promise<{start: string; middle: string; end: string}> => {
+    return new Promise((resolve) => {
+      const video = document.createElement('video');
+      video.preload = 'auto';
+      video.muted = true;
+      video.playsInline = true;
+      const url = URL.createObjectURL(file);
+      video.src = url;
+
+      video.onloadedmetadata = () => {
+        const duration = video.duration;
+        const times = [0.1, duration / 2, Math.max(duration - 1, 0.2)];
+        const frames: string[] = [];
+        let idx = 0;
+
+        const captureFrame = () => {
+          const canvas = document.createElement('canvas');
+          const w = Math.min(video.videoWidth, 1080);
+          const h = Math.round(w * (video.videoHeight / video.videoWidth));
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            frames.push(canvas.toDataURL('image/png'));
+          }
+          idx++;
+          if (idx < times.length) {
+            video.currentTime = times[idx];
+          } else {
+            URL.revokeObjectURL(url);
+            resolve({ start: frames[0] || '', middle: frames[1] || '', end: frames[2] || '' });
+          }
+        };
+
+        video.onseeked = captureFrame;
+        video.currentTime = times[0];
+      };
+
+      video.onerror = () => {
+        resolve({ start: '', middle: '', end: '' });
+        URL.revokeObjectURL(url);
+      };
+    });
+  };
 
   useEffect(() => {
     const wakeServer = async () => {
@@ -532,6 +715,7 @@ export default function App() {
     setError(null);
     setResult(null);
     setCurrentStep(0);
+    extractRefFrames(file).then(setRefFrames);
   };
 
   const onDragOver = (e: React.DragEvent) => e.preventDefault();
@@ -590,6 +774,11 @@ export default function App() {
       // Auto-save to both libraries
       try {
         const formatType = detectFormatType(analysisResult);
+        const meta = extractVideoMeta(analysisResult);
+        let thumb = '';
+        if (inputMode === 'upload' && videoFile) {
+          try { thumb = await extractThumbnail(videoFile); } catch {}
+        }
         const autoItem: LibraryItem = {
           id: Date.now().toString(),
           savedAt: new Date().toISOString(),
@@ -599,6 +788,10 @@ export default function App() {
           fullAnalysis: analysisResult,
           nbPrompt: extractNBPrompt(analysisResult),
           klingPrompt: extractKlingPrompt(analysisResult),
+          thumbnail: thumb,
+          isOneShot: meta.isOneShot,
+          duration: meta.duration,
+          clipCount: meta.clipCount,
         };
         await apiSaveItem(autoItem);
         setLibrary((prev) => [autoItem, ...prev]);
@@ -630,6 +823,7 @@ export default function App() {
     setVideoUrl('');
     setResult(null);
     setError(null);
+    setRefFrames(null);
   };
 
   // --- Library Actions ---
@@ -671,8 +865,19 @@ export default function App() {
     if (!item) return;
     setSavGeneratingId(id);
     try {
-      const savPrompts = await apiGenerateSavIdea(item.fullAnalysis);
-      const updated: LibraryItem = { ...item, savPrompts };
+      const savPrompts = await apiGenerateSavIdea(item);
+      const sdPrompt = extractSDPrompt(item.fullAnalysis);
+      const sdFrameType = extractSDFrameType(item.fullAnalysis);
+      const updatedSavPrompts: SavPrompts = {
+        ...savPrompts,
+        sdFrameType: savPrompts.sdFrameType || sdFrameType,
+      };
+      const updated: LibraryItem = {
+        ...item,
+        savPrompts: updatedSavPrompts,
+        sdPrompt: savPrompts.sdPrompt || sdPrompt,
+        sdFrameType: savPrompts.sdFrameType || sdFrameType,
+      };
       await apiSaveItem(updated);
       await apiPushToContentLibrary(updated);
       setLibrary((prev) => prev.map((i) => i.id === id ? updated : i));
@@ -820,6 +1025,28 @@ export default function App() {
                   ) : null}
                 </div>
               </section>
+
+              {refFrames && (
+                <section className="bg-white border border-[#141414] p-1 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+                  <div className="border border-[#141414] p-4">
+                    <h2 className="font-serif italic text-sm mb-3">Reference Frames</h2>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(['start', 'middle', 'end'] as const).map((key) => (
+                        <div key={key} className="space-y-1">
+                          <img src={refFrames[key]} alt={`${key} frame`} className="w-full border border-[#141414]/20 rounded-sm" />
+                          <a
+                            href={refFrames[key]}
+                            download={`ref-frame-${key}.png`}
+                            className="block text-center text-[10px] font-mono uppercase tracking-widest bg-[#141414] text-[#E4E3E0] py-1 rounded-sm hover:opacity-80 transition-opacity"
+                          >
+                            {key}
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </section>
+              )}
 
               {error && (
                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-red-50 border border-red-200 p-4 flex gap-3 items-start">
@@ -983,12 +1210,27 @@ export default function App() {
                 >
                   {/* Card Header */}
                   <div className="p-5 flex items-start justify-between gap-4">
+                    {/* First Frame Thumbnail */}
+                    {item.thumbnail && (
+                      <div className="shrink-0 w-24 h-40 bg-black border-2 border-[#141414] overflow-hidden rounded-sm shadow-[2px_2px_0px_0px_rgba(20,20,20,1)]">
+                        <img src={item.thumbnail} alt="First frame" className="w-full h-full object-cover" />
+                        <div className="absolute bottom-0 left-0 right-0 bg-[#141414]/70 text-[#E4E3E0] text-[8px] font-mono text-center py-0.5">FRAME 1</div>
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-3 mb-2 flex-wrap">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
                         <span className={`text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 border rounded-full ${FORMAT_COLORS[item.formatType] || FORMAT_COLORS['General Lifestyle']}`}>
                           <Tag className="w-2.5 h-2.5 inline mr-1" />
                           {item.formatType}
                         </span>
+                        {item.isOneShot !== undefined && (
+                          <span className={`text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 border rounded-full ${item.isOneShot ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                            {item.isOneShot ? '1 SHOT' : `${item.clipCount || '?'} CLIPS`}
+                          </span>
+                        )}
+                        {item.duration && (
+                          <span className="text-[10px] font-mono opacity-50">{item.duration}</span>
+                        )}
                         <span className="text-[10px] font-mono opacity-40">
                           {new Date(item.savedAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
                         </span>
@@ -1093,16 +1335,37 @@ export default function App() {
                                 </div>
                               )}
 
+                              {/* Seedance Prompt */}
+                              {item.savPrompts.seedancePrompt && (
+                                <div>
+                                  <div className="flex items-center justify-between mb-2">
+                                    <p className="text-[10px] font-mono uppercase tracking-widest opacity-50">Seedance 2.0 Prompt {item.savPrompts.seedanceCharCount ? `(${item.savPrompts.seedanceCharCount} chars)` : ''}</p>
+                                    <button onClick={() => copyToClipboard(item.savPrompts!.seedancePrompt!, item.id + '-seedance')} className="text-[10px] font-mono opacity-50 hover:opacity-100 flex items-center gap-1">
+                                      <Copy className="w-2.5 h-2.5" />{copiedId === item.id + '-seedance' ? 'Copied!' : 'Copy'}
+                                    </button>
+                                  </div>
+                                  <pre className="text-xs leading-relaxed whitespace-pre-wrap opacity-90 bg-white/5 p-3">{item.savPrompts.seedancePrompt}</pre>
+                                </div>
+                              )}
+
                               {/* Kling Prompt */}
                               {item.savPrompts.klingPrompt && (
                                 <div>
                                   <div className="flex items-center justify-between mb-2">
-                                    <p className="text-[10px] font-mono uppercase tracking-widest opacity-50">Kling Prompt</p>
+                                    <p className="text-[10px] font-mono uppercase tracking-widest opacity-50">Kling 3.0 Prompt (SFW/IG)</p>
                                     <button onClick={() => copyToClipboard(item.savPrompts!.klingPrompt, item.id + '-kling')} className="text-[10px] font-mono opacity-50 hover:opacity-100 flex items-center gap-1">
                                       <Copy className="w-2.5 h-2.5" />{copiedId === item.id + '-kling' ? 'Copied!' : 'Copy'}
                                     </button>
                                   </div>
                                   <pre className="text-xs leading-relaxed whitespace-pre-wrap opacity-90 bg-white/5 p-3">{item.savPrompts.klingPrompt}</pre>
+                                </div>
+                              )}
+
+                              {/* Face Forward Note */}
+                              {item.savPrompts.faceForwardNote && item.savPrompts.faceForwardNote !== 'N/A' && (
+                                <div className="bg-amber-500/20 border border-amber-400/30 p-3">
+                                  <p className="text-[10px] font-mono uppercase tracking-widest opacity-70 mb-1">⚠️ Face-Forward Adjustment</p>
+                                  <p className="text-xs opacity-90">{item.savPrompts.faceForwardNote}</p>
                                 </div>
                               )}
 
@@ -1131,6 +1394,23 @@ export default function App() {
                                 </div>
                                 <div className="bg-white/5 p-2.5 text-xs italic opacity-90">"{item.savPrompts.caption}"</div>
                               </div>
+
+                              {/* Hashtags */}
+                              {item.savPrompts.hashtags && item.savPrompts.hashtags.length > 0 && (
+                                <div>
+                                  <div className="flex items-center justify-between mb-2">
+                                    <p className="text-[10px] font-mono uppercase tracking-widest opacity-50">Hashtags (first comment)</p>
+                                    <button onClick={() => copyToClipboard(item.savPrompts!.hashtags!.map(h => h.startsWith('#') ? h : `#${h}`).join(' '), item.id + '-hashtags')} className="text-[10px] font-mono opacity-50 hover:opacity-100 flex items-center gap-1">
+                                      <Copy className="w-2.5 h-2.5" />{copiedId === item.id + '-hashtags' ? 'Copied!' : 'Copy'}
+                                    </button>
+                                  </div>
+                                  <div className="bg-white/5 p-2.5 text-xs opacity-90 flex gap-2 flex-wrap">
+                                    {item.savPrompts.hashtags.map((tag, i) => (
+                                      <span key={i} className="bg-white/10 px-2 py-0.5 rounded">{tag.startsWith('#') ? tag : `#${tag}`}</span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )}
 
