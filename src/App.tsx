@@ -51,6 +51,22 @@ interface LibraryItem {
   sdFrameType?: string;
 }
 
+interface ProductionClip {
+  clip: number;
+  timestamp: string;
+  action: string;
+  camera: string;
+  expression: string;
+  dialogue?: string | null;
+  nbPromptForClip?: string;
+}
+
+interface AudioPlan {
+  type: string;
+  description: string;
+  syncNotes?: string | null;
+}
+
 interface SavPrompts {
   nbPrompt: string;
   sdPrompt?: string;
@@ -58,6 +74,17 @@ interface SavPrompts {
   klingPrompt: string;
   seedancePrompt?: string;
   seedanceCharCount?: number;
+  videoPrompt?: string;
+  videoPromptCharCount?: number;
+  additionalClipPrompts?: string[];
+  videoModel?: string;
+  videoModelReason?: string;
+  videoFormat?: string;
+  videoDuration?: string | number;
+  clipCount?: number;
+  productionBrief?: ProductionClip[];
+  audioPlan?: AudioPlan;
+  editingNotes?: string;
   textOverlays: string[];
   caption: string;
   hashtags?: string[];
@@ -102,7 +129,7 @@ async function apiPushToContentLibrary(item: LibraryItem): Promise<void> {
         tags: [item.formatType],
         nb_prompt: item.savPrompts?.nbPrompt || item.nbPrompt || '',
         sd_prompt: item.savPrompts?.sdPrompt || '',
-        kling_prompt: item.savPrompts?.klingPrompt || item.klingPrompt || '',
+        kling_prompt: item.savPrompts?.videoPrompt || item.savPrompts?.klingPrompt || item.klingPrompt || '',
         hook_analysis: item.hookText,
         caption_options: item.savPrompts?.caption ? [item.savPrompts.caption] : [],
         raw: {
@@ -111,6 +138,15 @@ async function apiPushToContentLibrary(item: LibraryItem): Promise<void> {
           textOverlays: item.savPrompts?.textOverlays || [],
           whyItWorks: item.savPrompts?.whyItWorks || '',
           creativeBrief: item.savPrompts?.creativeBrief || '',
+          videoModel: item.savPrompts?.videoModel || '',
+          videoModelReason: item.savPrompts?.videoModelReason || '',
+          videoFormat: item.savPrompts?.videoFormat || '',
+          videoDuration: item.savPrompts?.videoDuration || '',
+          clipCount: item.savPrompts?.clipCount || 1,
+          productionBrief: item.savPrompts?.productionBrief || [],
+          audioPlan: item.savPrompts?.audioPlan || null,
+          editingNotes: item.savPrompts?.editingNotes || '',
+          additionalClipPrompts: item.savPrompts?.additionalClipPrompts || [],
         },
       }),
     });
@@ -141,6 +177,17 @@ async function apiGenerateSavIdea(item: LibraryItem): Promise<SavPrompts> {
     seedanceCharCount?: number;
     klingPrompt?: string;
     klingCharCount?: number;
+    videoPrompt?: string;
+    videoPromptCharCount?: number;
+    additionalClipPrompts?: string[];
+    videoModel?: string;
+    videoModelReason?: string;
+    videoFormat?: string;
+    videoDuration?: string | number;
+    clipCount?: number;
+    productionBrief?: ProductionClip[];
+    audioPlan?: AudioPlan;
+    editingNotes?: string;
     textOverlays?: string[];
     caption?: string;
     hashtags?: string[];
@@ -149,9 +196,20 @@ async function apiGenerateSavIdea(item: LibraryItem): Promise<SavPrompts> {
     nbPrompt: data.nbPrompt || '',
     sdPrompt: data.sdPrompt || '',
     sdFrameType: data.sdFrameType || '',
-    klingPrompt: data.klingPrompt || '',
+    klingPrompt: data.klingPrompt || data.videoPrompt || '',
     seedancePrompt: data.seedancePrompt || '',
     seedanceCharCount: data.seedanceCharCount,
+    videoPrompt: data.videoPrompt || '',
+    videoPromptCharCount: data.videoPromptCharCount,
+    additionalClipPrompts: data.additionalClipPrompts || [],
+    videoModel: data.videoModel || '',
+    videoModelReason: data.videoModelReason || '',
+    videoFormat: data.videoFormat || '',
+    videoDuration: data.videoDuration,
+    clipCount: data.clipCount,
+    productionBrief: data.productionBrief || [],
+    audioPlan: data.audioPlan,
+    editingNotes: data.editingNotes || '',
     textOverlays: data.textOverlays || [],
     caption: data.caption || '',
     hashtags: data.hashtags || [],
@@ -423,17 +481,17 @@ function generateSavPrompts(item: LibraryItem): SavPrompts {
   };
 }
 
-// --- Format Type Badge Colors ---
+// --- Format Type Badge Colors (dark theme) ---
 const FORMAT_COLORS: Record<string, string> = {
-  'ICP Targeting': 'bg-purple-100 text-purple-800 border-purple-200',
-  'Pick-Me Static': 'bg-pink-100 text-pink-800 border-pink-200',
-  'Transformation': 'bg-blue-100 text-blue-800 border-blue-200',
-  'Comment Farming': 'bg-orange-100 text-orange-800 border-orange-200',
-  'Share Farming': 'bg-green-100 text-green-800 border-green-200',
-  'Dirty Talking': 'bg-red-100 text-red-800 border-red-200',
-  'Dancing/Motion': 'bg-yellow-100 text-yellow-800 border-yellow-200',
-  'Controversial Static': 'bg-gray-100 text-gray-800 border-gray-200',
-  'General Lifestyle': 'bg-teal-100 text-teal-800 border-teal-200',
+  'ICP Targeting': 'bg-purple-500/20 text-purple-300 border-purple-500/30',
+  'Pick-Me Static': 'bg-pink-500/20 text-pink-300 border-pink-500/30',
+  'Transformation': 'bg-blue-500/20 text-blue-300 border-blue-500/30',
+  'Comment Farming': 'bg-orange-500/20 text-orange-300 border-orange-500/30',
+  'Share Farming': 'bg-green-500/20 text-green-300 border-green-500/30',
+  'Dirty Talking': 'bg-red-500/20 text-red-300 border-red-500/30',
+  'Dancing/Motion': 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
+  'Controversial Static': 'bg-slate-500/20 text-slate-300 border-slate-500/30',
+  'General Lifestyle': 'bg-teal-500/20 text-teal-300 border-teal-500/30',
 };
 
 // --- Constants ---
@@ -894,25 +952,25 @@ export default function App() {
 
   // --- Render ---
   return (
-    <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0]">
+    <div className="min-h-screen bg-[#0f0f14] text-[#e2e8f0] font-sans selection:bg-[#7c3aed] selection:text-white">
       {/* Header */}
-      <header className="border-b border-[#141414] p-6 flex justify-between items-center">
+      <header className="border-b border-[#2a2a3a] p-6 flex justify-between items-center bg-[#0f0f14]">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-[#141414] flex items-center justify-center rounded-sm">
-            <Zap className="text-[#E4E3E0] w-6 h-6" />
+          <div className="w-10 h-10 bg-[#7c3aed] flex items-center justify-center rounded-sm shadow-lg shadow-[#7c3aed]/30">
+            <Zap className="text-white w-6 h-6" />
           </div>
           <div>
-            <h1 className="font-serif italic text-xl leading-none">UGC Reverse-Engineer</h1>
-            <p className="text-[10px] uppercase tracking-widest opacity-50 mt-1 font-mono">v2.0 / Format Library</p>
+            <h1 className="font-serif italic text-xl leading-none text-[#e2e8f0]">UGC Reverse-Engineer</h1>
+            <p className="text-[10px] uppercase tracking-widest text-[#64748b] mt-1 font-mono">v2.0 / Format Library</p>
           </div>
         </div>
 
         {/* Main Tab Switcher */}
-        <div className="flex items-center gap-1 bg-[#141414]/10 p-1 rounded">
+        <div className="flex items-center gap-1 bg-white/5 p-1 rounded-lg border border-[#2a2a3a]">
           <button
             onClick={() => setMainTab('analyze')}
-            className={`px-4 py-2 text-xs font-mono uppercase tracking-widest transition-all flex items-center gap-2 ${
-              mainTab === 'analyze' ? 'bg-[#141414] text-[#E4E3E0]' : 'hover:bg-[#141414]/10'
+            className={`px-4 py-2 text-xs font-mono uppercase tracking-widest transition-all flex items-center gap-2 rounded ${
+              mainTab === 'analyze' ? 'bg-[#7c3aed] text-white shadow-lg shadow-[#7c3aed]/20' : 'text-[#64748b] hover:text-[#e2e8f0] hover:bg-white/5'
             }`}
           >
             <Zap className="w-3 h-3" />
@@ -920,14 +978,14 @@ export default function App() {
           </button>
           <button
             onClick={() => setMainTab('library')}
-            className={`px-4 py-2 text-xs font-mono uppercase tracking-widest transition-all flex items-center gap-2 ${
-              mainTab === 'library' ? 'bg-[#141414] text-[#E4E3E0]' : 'hover:bg-[#141414]/10'
+            className={`px-4 py-2 text-xs font-mono uppercase tracking-widest transition-all flex items-center gap-2 rounded ${
+              mainTab === 'library' ? 'bg-[#7c3aed] text-white shadow-lg shadow-[#7c3aed]/20' : 'text-[#64748b] hover:text-[#e2e8f0] hover:bg-white/5'
             }`}
           >
             <Library className="w-3 h-3" />
             Library
             {library.length > 0 && (
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${mainTab === 'library' ? 'bg-[#E4E3E0] text-[#141414]' : 'bg-[#141414] text-[#E4E3E0]'}`}>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${mainTab === 'library' ? 'bg-white/20 text-white' : 'bg-[#7c3aed]/30 text-[#7c3aed]'}`}>
                 {library.length}
               </span>
             )}
@@ -947,20 +1005,20 @@ export default function App() {
           >
             {/* Left Column */}
             <div className="lg:col-span-5 space-y-6">
-              <section className="bg-white border border-[#141414] p-1 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
-                <div className="border border-[#141414] p-6">
+              <section className="bg-[#1a1a24] border border-[#2a2a3a] rounded-lg shadow-lg shadow-black/20">
+                <div className="p-6">
                   <div className="flex items-center justify-between mb-4">
-                    <h2 className="font-serif italic text-lg">Reference Video</h2>
-                    <div className="flex gap-2 bg-[#141414]/5 p-1 rounded">
+                    <h2 className="font-serif italic text-lg text-[#e2e8f0]">Reference Video</h2>
+                    <div className="flex gap-1 bg-white/5 p-1 rounded-lg border border-[#2a2a3a]">
                       <button
                         onClick={() => { setInputMode('upload'); reset(); }}
-                        className={`px-3 py-1 text-xs font-mono uppercase tracking-widest transition-all ${inputMode === 'upload' ? 'bg-[#141414] text-[#E4E3E0]' : 'text-[#141414] hover:bg-[#141414]/10'}`}
+                        className={`px-3 py-1 text-xs font-mono uppercase tracking-widest transition-all rounded ${inputMode === 'upload' ? 'bg-[#7c3aed] text-white' : 'text-[#64748b] hover:text-[#e2e8f0]'}`}
                       >
                         Upload
                       </button>
                       <button
                         onClick={() => { setInputMode('url'); reset(); }}
-                        className={`px-3 py-1 text-xs font-mono uppercase tracking-widest transition-all ${inputMode === 'url' ? 'bg-[#141414] text-[#E4E3E0]' : 'text-[#141414] hover:bg-[#141414]/10'}`}
+                        className={`px-3 py-1 text-xs font-mono uppercase tracking-widest transition-all rounded ${inputMode === 'url' ? 'bg-[#7c3aed] text-white' : 'text-[#64748b] hover:text-[#e2e8f0]'}`}
                       >
                         Paste URL
                       </button>
@@ -972,33 +1030,33 @@ export default function App() {
                       onDragOver={onDragOver}
                       onDrop={onDrop}
                       onClick={() => fileInputRef.current?.click()}
-                      className="border-2 border-dashed border-[#141414]/20 aspect-video flex flex-col items-center justify-center cursor-pointer hover:bg-[#141414]/5 transition-colors group"
+                      className="border-2 border-dashed border-[#2a2a3a] aspect-video flex flex-col items-center justify-center cursor-pointer hover:border-[#7c3aed]/50 hover:bg-[#7c3aed]/5 transition-colors group rounded-lg"
                     >
-                      <Upload className="w-10 h-10 mb-4 opacity-20 group-hover:opacity-100 transition-opacity" />
-                      <p className="text-sm font-mono uppercase tracking-wider">Drop video or click to upload</p>
-                      <p className="text-[10px] opacity-40 mt-2">MP4, MOV, WEBM · Max 20MB recommended</p>
+                      <Upload className="w-10 h-10 mb-4 text-[#64748b] group-hover:text-[#7c3aed] transition-colors" />
+                      <p className="text-sm font-mono uppercase tracking-wider text-[#64748b] group-hover:text-[#e2e8f0] transition-colors">Drop video or click to upload</p>
+                      <p className="text-[10px] text-[#64748b] mt-2">MP4, MOV, WEBM · Max 20MB recommended</p>
                       <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="video/*" className="hidden" />
                     </div>
                   ) : inputMode === 'upload' && videoPreview ? (
                     <div className="space-y-4">
-                      <div className="relative aspect-video bg-black border border-[#141414]">
+                      <div className="relative aspect-video bg-black border border-[#2a2a3a] rounded-lg overflow-hidden">
                         <video src={videoPreview} controls className="w-full h-full object-contain" />
-                        <button onClick={reset} className="absolute top-2 right-2 p-2 bg-white border border-[#141414] hover:bg-[#141414] hover:text-white transition-colors">
+                        <button onClick={reset} className="absolute top-2 right-2 p-2 bg-[#1a1a24] border border-[#2a2a3a] hover:border-[#7c3aed] hover:text-[#7c3aed] transition-colors rounded">
                           <RefreshCcw className="w-4 h-4" />
                         </button>
                       </div>
-                      <div className="flex items-center justify-between p-3 bg-[#141414]/5 border border-[#141414]/10">
+                      <div className="flex items-center justify-between p-3 bg-white/5 border border-[#2a2a3a] rounded-lg">
                         <div className="flex items-center gap-2">
-                          <Video className="w-4 h-4 opacity-50" />
-                          <span className="text-xs font-mono truncate max-w-[200px]">{videoFile?.name}</span>
+                          <Video className="w-4 h-4 text-[#64748b]" />
+                          <span className="text-xs font-mono truncate max-w-[200px] text-[#e2e8f0]">{videoFile?.name}</span>
                         </div>
-                        <span className="text-[10px] font-mono opacity-50">{(videoFile!.size / (1024 * 1024)).toFixed(2)} MB</span>
+                        <span className="text-[10px] font-mono text-[#64748b]">{(videoFile!.size / (1024 * 1024)).toFixed(2)} MB</span>
                       </div>
-                      {!serverReady && <p className="text-[10px] font-mono text-center opacity-50 animate-pulse">⏳ Waking up server...</p>}
+                      {!serverReady && <p className="text-[10px] font-mono text-center text-[#64748b] animate-pulse">Waking up server...</p>}
                       <button
                         onClick={analyzeVideo}
                         disabled={isAnalyzing}
-                        className="w-full bg-[#141414] text-[#E4E3E0] py-4 flex items-center justify-center gap-3 hover:bg-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed transition-all uppercase tracking-widest text-sm font-bold"
+                        className="w-full bg-[#7c3aed] text-white py-4 flex items-center justify-center gap-3 hover:bg-[#6d28d9] disabled:opacity-50 disabled:cursor-not-allowed transition-all uppercase tracking-widest text-sm font-bold rounded-lg shadow-lg shadow-[#7c3aed]/20"
                       >
                         {isAnalyzing ? <><Loader2 className="w-5 h-5 animate-spin" />Analyzing...</> : <>Start Analysis<ArrowRight className="w-5 h-5" /></>}
                       </button>
@@ -1010,14 +1068,14 @@ export default function App() {
                         value={videoUrl}
                         onChange={(e) => setVideoUrl(e.target.value)}
                         placeholder="Paste YouTube Shorts, TikTok, or Pinterest link..."
-                        className="w-full px-4 py-3 border border-[#141414] font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
+                        className="w-full px-4 py-3 bg-white/5 border border-[#2a2a3a] text-[#e2e8f0] font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-[#7c3aed] rounded-lg placeholder:text-[#64748b] transition-colors"
                       />
-                      <p className="text-[10px] opacity-60 font-mono">Supported: YouTube Shorts, TikTok videos, Pinterest pins with video</p>
-                      {!serverReady && <p className="text-[10px] font-mono text-center opacity-50 animate-pulse">⏳ Waking up server...</p>}
+                      <p className="text-[10px] text-[#64748b] font-mono">Supported: YouTube Shorts, TikTok videos, Pinterest pins with video</p>
+                      {!serverReady && <p className="text-[10px] font-mono text-center text-[#64748b] animate-pulse">Waking up server...</p>}
                       <button
                         onClick={analyzeVideo}
                         disabled={isAnalyzing || !videoUrl || !isValidUrl(videoUrl)}
-                        className="w-full bg-[#141414] text-[#E4E3E0] py-4 flex items-center justify-center gap-3 hover:bg-[#2a2a2a] disabled:opacity-50 disabled:cursor-not-allowed transition-all uppercase tracking-widest text-sm font-bold"
+                        className="w-full bg-[#7c3aed] text-white py-4 flex items-center justify-center gap-3 hover:bg-[#6d28d9] disabled:opacity-50 disabled:cursor-not-allowed transition-all uppercase tracking-widest text-sm font-bold rounded-lg shadow-lg shadow-[#7c3aed]/20"
                       >
                         {isAnalyzing ? <><Loader2 className="w-5 h-5 animate-spin" />Analyzing...</> : <>Start Analysis<ArrowRight className="w-5 h-5" /></>}
                       </button>
@@ -1027,17 +1085,17 @@ export default function App() {
               </section>
 
               {refFrames && (
-                <section className="bg-white border border-[#141414] p-1 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
-                  <div className="border border-[#141414] p-4">
-                    <h2 className="font-serif italic text-sm mb-3">Reference Frames</h2>
+                <section className="bg-[#1a1a24] border border-[#2a2a3a] rounded-lg shadow-lg shadow-black/20">
+                  <div className="p-4">
+                    <h2 className="font-serif italic text-sm mb-3 text-[#e2e8f0]">Reference Frames</h2>
                     <div className="grid grid-cols-3 gap-2">
                       {(['start', 'middle', 'end'] as const).map((key) => (
                         <div key={key} className="space-y-1">
-                          <img src={refFrames[key]} alt={`${key} frame`} className="w-full border border-[#141414]/20 rounded-sm" />
+                          <img src={refFrames[key]} alt={`${key} frame`} className="w-full border border-[#2a2a3a] rounded-sm" />
                           <a
                             href={refFrames[key]}
                             download={`ref-frame-${key}.png`}
-                            className="block text-center text-[10px] font-mono uppercase tracking-widest bg-[#141414] text-[#E4E3E0] py-1 rounded-sm hover:opacity-80 transition-opacity"
+                            className="block text-center text-[10px] font-mono uppercase tracking-widest bg-[#7c3aed] text-white py-1 rounded-sm hover:bg-[#6d28d9] transition-colors"
                           >
                             {key}
                           </a>
@@ -1049,28 +1107,28 @@ export default function App() {
               )}
 
               {error && (
-                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-red-50 border border-red-200 p-4 flex gap-3 items-start">
-                  <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-red-500/10 border border-red-500/30 p-4 flex gap-3 items-start rounded-lg">
+                  <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
                   <div>
-                    <p className="text-sm font-bold text-red-800">Analysis Failed</p>
-                    <p className="text-xs text-red-600 mt-1">{error}</p>
+                    <p className="text-sm font-bold text-red-400">Analysis Failed</p>
+                    <p className="text-xs text-red-400/80 mt-1">{error}</p>
                   </div>
                 </motion.div>
               )}
 
               {isAnalyzing && (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-widest opacity-60">
+                  <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-widest text-[#64748b]">
                     <span>Processing Stream</span>
-                    <span>{ANALYSIS_STEPS[currentStep]}...</span>
+                    <span className="text-[#7c3aed]">{ANALYSIS_STEPS[currentStep]}...</span>
                   </div>
-                  <div className="h-1 bg-[#141414]/10 w-full overflow-hidden">
-                    <motion.div className="h-full bg-[#141414]" initial={{ width: '0%' }} animate={{ width: `${((currentStep + 1) / ANALYSIS_STEPS.length) * 100}%` }} transition={{ duration: 0.5 }} />
+                  <div className="h-1 bg-white/5 w-full overflow-hidden rounded-full">
+                    <motion.div className="h-full bg-[#7c3aed] rounded-full" initial={{ width: '0%' }} animate={{ width: `${((currentStep + 1) / ANALYSIS_STEPS.length) * 100}%` }} transition={{ duration: 0.5 }} />
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     {ANALYSIS_STEPS.map((step, i) => (
                       <div key={step} className={`flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest transition-opacity duration-300 ${i <= currentStep ? 'opacity-100' : 'opacity-20'}`}>
-                        {i < currentStep ? <CheckCircle2 className="w-3 h-3 text-emerald-600" /> : i === currentStep ? <div className="w-1.5 h-1.5 rounded-full animate-pulse bg-[#141414]" /> : <div className="w-1.5 h-1.5 rounded-full bg-[#141414]/20" />}
+                        {i < currentStep ? <CheckCircle2 className="w-3 h-3 text-[#10b981]" /> : i === currentStep ? <div className="w-1.5 h-1.5 rounded-full animate-pulse bg-[#7c3aed]" /> : <div className="w-1.5 h-1.5 rounded-full bg-white/10" />}
                         {step}
                       </div>
                     ))}
@@ -1081,24 +1139,24 @@ export default function App() {
 
             {/* Right Column: Results */}
             <div className="lg:col-span-7">
-              <section className="bg-white border border-[#141414] flex flex-col shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
-                <div className="border-b border-[#141414] p-4 flex justify-between items-center bg-[#141414]/5">
+              <section className="bg-[#1a1a24] border border-[#2a2a3a] flex flex-col rounded-lg shadow-lg shadow-black/20">
+                <div className="border-b border-[#2a2a3a] p-4 flex justify-between items-center bg-white/5 rounded-t-lg">
                   <div className="flex items-center gap-2">
-                    <FileText className="w-4 h-4" />
-                    <h2 className="text-xs font-mono uppercase tracking-widest font-bold">Analysis Report</h2>
+                    <FileText className="w-4 h-4 text-[#7c3aed]" />
+                    <h2 className="text-xs font-mono uppercase tracking-widest font-bold text-[#e2e8f0]">Analysis Report</h2>
                   </div>
                   {result && (
                     <div className="flex items-center gap-3">
                       {/* Save to Library */}
                       <button
                         onClick={saveToLibrary}
-                        className="text-[10px] font-mono uppercase tracking-widest flex items-center gap-2 hover:underline text-emerald-700"
+                        className="text-[10px] font-mono uppercase tracking-widest flex items-center gap-2 text-[#10b981] hover:text-[#10b981]/80 transition-colors"
                       >
                         <BookmarkPlus className="w-3 h-3" />
                         {savedToast ? 'Saved!' : 'Save to Library'}
                       </button>
-                      <span className="opacity-20">|</span>
-                      <button onClick={() => copyToClipboard(result)} className="text-[10px] font-mono uppercase tracking-widest flex items-center gap-2 hover:underline">
+                      <span className="text-[#2a2a3a]">|</span>
+                      <button onClick={() => copyToClipboard(result)} className="text-[10px] font-mono uppercase tracking-widest flex items-center gap-2 text-[#64748b] hover:text-[#e2e8f0] transition-colors">
                         <Copy className="w-3 h-3" />
                         Copy Markdown
                       </button>
@@ -1108,20 +1166,20 @@ export default function App() {
 
                 <div className="p-8">
                   {!result && !isAnalyzing && (
-                    <div className="h-full flex flex-col items-center justify-center text-center opacity-20">
-                      <FileText className="w-16 h-16 mb-4" />
-                      <p className="font-serif italic text-xl">Waiting for data...</p>
-                      <p className="text-xs font-mono uppercase tracking-widest mt-2">Upload and analyze a video to see the breakdown</p>
+                    <div className="h-full flex flex-col items-center justify-center text-center text-[#64748b]">
+                      <FileText className="w-16 h-16 mb-4 opacity-20" />
+                      <p className="font-serif italic text-xl text-[#64748b]">Waiting for data...</p>
+                      <p className="text-xs font-mono uppercase tracking-widest mt-2 text-[#64748b]">Upload and analyze a video to see the breakdown</p>
                     </div>
                   )}
                   {isAnalyzing && !result && (
                     <div className="h-full flex flex-col items-center justify-center text-center">
                       <div className="relative">
-                        <Loader2 className="w-12 h-12 animate-spin opacity-20" />
-                        <Zap className="w-6 h-6 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-pulse" />
+                        <Loader2 className="w-12 h-12 animate-spin text-[#7c3aed]/30" />
+                        <Zap className="w-6 h-6 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-pulse text-[#7c3aed]" />
                       </div>
-                      <p className="font-serif italic text-xl mt-6">Analyzing Reference...</p>
-                      <p className="text-xs font-mono uppercase tracking-widest mt-2 animate-pulse">This may take up to 60 seconds</p>
+                      <p className="font-serif italic text-xl mt-6 text-[#e2e8f0]">Analyzing Reference...</p>
+                      <p className="text-xs font-mono uppercase tracking-widest mt-2 animate-pulse text-[#64748b]">This may take up to 60 seconds</p>
                     </div>
                   )}
                   {result && (
@@ -1149,8 +1207,8 @@ export default function App() {
             {/* Library Header */}
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h2 className="font-serif italic text-2xl">Format Library</h2>
-                <p className="text-xs font-mono uppercase tracking-widest opacity-50 mt-1">{library.length} saved formats</p>
+                <h2 className="font-serif italic text-2xl text-[#e2e8f0]">Format Library</h2>
+                <p className="text-xs font-mono uppercase tracking-widest text-[#64748b] mt-1">{library.length} saved formats</p>
               </div>
               {/* Filter by type */}
               {library.length > 0 && (
@@ -1159,10 +1217,10 @@ export default function App() {
                     <button
                       key={type}
                       onClick={() => setFilterType(type)}
-                      className={`px-3 py-1 text-[10px] font-mono uppercase tracking-widest border transition-all ${
+                      className={`px-3 py-1 text-[10px] font-mono uppercase tracking-widest border rounded-full transition-all ${
                         filterType === type
-                          ? 'bg-[#141414] text-[#E4E3E0] border-[#141414]'
-                          : 'border-[#141414]/20 hover:border-[#141414]'
+                          ? 'bg-[#7c3aed] text-white border-[#7c3aed] shadow-lg shadow-[#7c3aed]/20'
+                          : 'border-[#2a2a3a] text-[#64748b] hover:border-[#7c3aed]/50 hover:text-[#e2e8f0]'
                       }`}
                     >
                       {type}
@@ -1174,27 +1232,27 @@ export default function App() {
 
             {/* Loading State */}
             {libraryLoading && (
-              <div className="flex flex-col items-center justify-center py-24 text-center opacity-40">
-                <Loader2 className="w-10 h-10 animate-spin mb-4" />
+              <div className="flex flex-col items-center justify-center py-24 text-center text-[#64748b]">
+                <Loader2 className="w-10 h-10 animate-spin mb-4 text-[#7c3aed]" />
                 <p className="text-xs font-mono uppercase tracking-widest">Loading library from cloud...</p>
               </div>
             )}
 
             {/* Error State */}
             {libraryError && !libraryLoading && (
-              <div className="bg-red-50 border border-red-200 p-4 flex gap-3 items-start mb-4">
-                <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+              <div className="bg-red-500/10 border border-red-500/30 p-4 flex gap-3 items-start mb-4 rounded-lg">
+                <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-sm font-bold text-red-800">Library Error</p>
-                  <p className="text-xs text-red-600 mt-1">{libraryError}</p>
+                  <p className="text-sm font-bold text-red-400">Library Error</p>
+                  <p className="text-xs text-red-400/80 mt-1">{libraryError}</p>
                 </div>
               </div>
             )}
 
             {/* Empty State */}
             {!libraryLoading && !libraryError && library.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-24 text-center opacity-30">
-                <Library className="w-16 h-16 mb-4" />
+              <div className="flex flex-col items-center justify-center py-24 text-center text-[#64748b]">
+                <Library className="w-16 h-16 mb-4 opacity-20" />
                 <p className="font-serif italic text-xl">Library is empty</p>
                 <p className="text-xs font-mono uppercase tracking-widest mt-2">Analyze a video and click "Save to Library"</p>
               </div>
@@ -1206,15 +1264,15 @@ export default function App() {
                 <motion.div
                   key={item.id}
                   layout
-                  className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]"
+                  className="bg-[#1a1a24] border border-[#2a2a3a] rounded-lg shadow-lg shadow-black/20 hover:border-[#7c3aed]/30 transition-colors"
                 >
                   {/* Card Header */}
                   <div className="p-5 flex items-start justify-between gap-4">
                     {/* First Frame Thumbnail */}
                     {item.thumbnail && (
-                      <div className="shrink-0 w-24 h-40 bg-black border-2 border-[#141414] overflow-hidden rounded-sm shadow-[2px_2px_0px_0px_rgba(20,20,20,1)]">
+                      <div className="shrink-0 w-24 h-40 bg-black border border-[#2a2a3a] overflow-hidden rounded-sm">
                         <img src={item.thumbnail} alt="First frame" className="w-full h-full object-cover" />
-                        <div className="absolute bottom-0 left-0 right-0 bg-[#141414]/70 text-[#E4E3E0] text-[8px] font-mono text-center py-0.5">FRAME 1</div>
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-[#e2e8f0] text-[8px] font-mono text-center py-0.5">FRAME 1</div>
                       </div>
                     )}
                     <div className="flex-1 min-w-0">
@@ -1224,23 +1282,23 @@ export default function App() {
                           {item.formatType}
                         </span>
                         {item.isOneShot !== undefined && (
-                          <span className={`text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 border rounded-full ${item.isOneShot ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                          <span className={`text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 border rounded-full ${item.isOneShot ? 'bg-[#10b981]/20 text-[#10b981] border-[#10b981]/30' : 'bg-[#f59e0b]/20 text-[#f59e0b] border-[#f59e0b]/30'}`}>
                             {item.isOneShot ? '1 SHOT' : `${item.clipCount || '?'} CLIPS`}
                           </span>
                         )}
                         {item.duration && (
-                          <span className="text-[10px] font-mono opacity-50">{item.duration}</span>
+                          <span className="text-[10px] font-mono text-[#64748b]">{item.duration}</span>
                         )}
-                        <span className="text-[10px] font-mono opacity-40">
+                        <span className="text-[10px] font-mono text-[#64748b]">
                           {new Date(item.savedAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
                         </span>
                         {item.sourceUrl && (
-                          <a href={item.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] font-mono opacity-40 hover:opacity-100 underline truncate max-w-[200px]">
+                          <a href={item.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] font-mono text-[#64748b] hover:text-[#06b6d4] underline truncate max-w-[200px] transition-colors">
                             {item.sourceUrl}
                           </a>
                         )}
                       </div>
-                      <p className="text-sm opacity-70 italic leading-snug">"{item.hookText}"</p>
+                      <p className="text-sm text-[#64748b] italic leading-snug">"{item.hookText}"</p>
                     </div>
 
                     {/* Card Actions */}
@@ -1250,13 +1308,13 @@ export default function App() {
                         <button
                           onClick={() => handleMakeForSav(item.id)}
                           disabled={savGeneratingId === item.id}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-mono uppercase tracking-widest hover:bg-[#2a2a2a] disabled:opacity-50 transition-all"
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-[#7c3aed] text-white text-[10px] font-mono uppercase tracking-widest hover:bg-[#6d28d9] disabled:opacity-50 transition-all rounded shadow-lg shadow-[#7c3aed]/20"
                         >
                           {savGeneratingId === item.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
                           Make for Sav
                         </button>
                       ) : (
-                        <span className="text-[10px] font-mono text-emerald-700 flex items-center gap-1">
+                        <span className="text-[10px] font-mono text-[#10b981] flex items-center gap-1">
                           <CheckCircle2 className="w-3 h-3" /> Sav Ready
                         </span>
                       )}
@@ -1264,7 +1322,7 @@ export default function App() {
                       {/* Expand/Collapse */}
                       <button
                         onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
-                        className="p-2 border border-[#141414]/20 hover:border-[#141414] transition-colors"
+                        className="p-2 border border-[#2a2a3a] hover:border-[#7c3aed]/50 hover:text-[#7c3aed] transition-colors rounded"
                       >
                         {expandedId === item.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                       </button>
@@ -1272,7 +1330,7 @@ export default function App() {
                       {/* Delete */}
                       <button
                         onClick={() => deleteFromLibrary(item.id)}
-                        className="p-2 border border-[#141414]/20 hover:border-red-400 hover:text-red-600 transition-colors"
+                        className="p-2 border border-[#2a2a3a] hover:border-red-500/50 hover:text-red-400 transition-colors rounded"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -1286,97 +1344,188 @@ export default function App() {
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: 'auto', opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
-                        className="overflow-hidden border-t border-[#141414]/10"
+                        className="overflow-hidden border-t border-[#2a2a3a]"
                       >
                         <div className="p-5 space-y-6">
                           {/* Sav Prompts (if generated) */}
                           {item.savPrompts && (
-                            <div className="bg-[#141414] text-[#E4E3E0] p-5 space-y-5">
+                            <div className="bg-[#12121c] border-l-2 border-[#7c3aed] text-[#e2e8f0] p-5 space-y-5 rounded-r-lg">
                               <div className="flex items-center gap-2 mb-4">
-                                <Sparkles className="w-4 h-4" />
-                                <h3 className="text-xs font-mono uppercase tracking-widest font-bold">Sav Prompts</h3>
+                                <Sparkles className="w-4 h-4 text-[#7c3aed]" />
+                                <h3 className="text-xs font-mono uppercase tracking-widest font-bold text-[#7c3aed]">Sav Prompts</h3>
                               </div>
 
                               {/* Formula + Brief */}
                               {item.savPrompts.whyItWorks && (
-                                <div className="bg-white/10 p-3 space-y-2">
-                                  <p className="text-[10px] font-mono uppercase tracking-widest opacity-50">Why It Works</p>
-                                  <p className="text-xs leading-relaxed opacity-90">{item.savPrompts.whyItWorks}</p>
+                                <div className="bg-white/5 p-3 space-y-2 rounded border border-[#2a2a3a]">
+                                  <p className="text-[10px] font-mono uppercase tracking-widest text-[#64748b]">Why It Works</p>
+                                  <p className="text-xs leading-relaxed text-[#e2e8f0]/90">{item.savPrompts.whyItWorks}</p>
                                 </div>
                               )}
                               {item.savPrompts.creativeBrief && (
-                                <div className="bg-white/10 p-3 space-y-2">
-                                  <p className="text-[10px] font-mono uppercase tracking-widest opacity-50">Creative Brief</p>
-                                  <p className="text-xs leading-relaxed opacity-90">{item.savPrompts.creativeBrief}</p>
+                                <div className="bg-white/5 p-3 space-y-2 rounded border border-[#2a2a3a]">
+                                  <p className="text-[10px] font-mono uppercase tracking-widest text-[#64748b]">Creative Brief</p>
+                                  <p className="text-xs leading-relaxed text-[#e2e8f0]/90">{item.savPrompts.creativeBrief}</p>
+                                </div>
+                              )}
+
+                              {/* Video Model + Format */}
+                              {item.savPrompts.videoModel && (
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div className="bg-white/5 p-3 rounded border border-[#2a2a3a]">
+                                    <p className="text-[10px] font-mono uppercase tracking-widest text-[#64748b] mb-1">Video Model</p>
+                                    <span className={`text-sm font-bold ${item.savPrompts.videoModel === 'cdance' ? 'text-[#f59e0b]' : 'text-[#10b981]'}`}>
+                                      {item.savPrompts.videoModel === 'cdance' ? 'CDance (Seedance 2.0)' : 'Kling 3.0'}
+                                    </span>
+                                    {item.savPrompts.videoModelReason && (
+                                      <p className="text-[10px] text-[#64748b] mt-1">{item.savPrompts.videoModelReason}</p>
+                                    )}
+                                  </div>
+                                  <div className="bg-white/5 p-3 rounded border border-[#2a2a3a]">
+                                    <p className="text-[10px] font-mono uppercase tracking-widest text-[#64748b] mb-1">Format</p>
+                                    <span className={`text-sm font-bold ${item.savPrompts.videoFormat === 'MULTI_CLIP' ? 'text-[#f59e0b]' : 'text-[#10b981]'}`}>
+                                      {item.savPrompts.videoFormat === 'MULTI_CLIP' ? `Multi-Clip (${item.savPrompts.clipCount || '?'} clips)` : 'One Shot'}
+                                    </span>
+                                    {item.savPrompts.videoDuration && (
+                                      <p className="text-[10px] text-[#64748b] mt-1">~{item.savPrompts.videoDuration}s target</p>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Production Brief — Scene Breakdown */}
+                              {item.savPrompts.productionBrief && item.savPrompts.productionBrief.length > 0 && (
+                                <div>
+                                  <p className="text-[10px] font-mono uppercase tracking-widest text-[#64748b] mb-2">Production Brief — Scene Breakdown</p>
+                                  <div className="space-y-2">
+                                    {item.savPrompts.productionBrief.map((clip, i) => (
+                                      <div key={i} className="bg-white/5 p-3 rounded border border-[#2a2a3a]">
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <span className="text-[10px] font-mono font-bold text-[#7c3aed] bg-[#7c3aed]/20 px-2 py-0.5 rounded">CLIP {clip.clip}</span>
+                                          <span className="text-[10px] font-mono text-[#64748b]">{clip.timestamp}</span>
+                                          {clip.expression && <span className="text-[10px] font-mono text-[#f59e0b]">{clip.expression}</span>}
+                                        </div>
+                                        <p className="text-xs text-[#e2e8f0]/90 leading-relaxed">{clip.action}</p>
+                                        <div className="flex gap-4 mt-1">
+                                          <span className="text-[10px] text-[#64748b]">Camera: {clip.camera}</span>
+                                          {clip.dialogue && <span className="text-[10px] text-[#06b6d4] italic">Script: "{clip.dialogue}"</span>}
+                                        </div>
+                                        {clip.nbPromptForClip && clip.nbPromptForClip !== 'use main NB' && (
+                                          <div className="mt-2 bg-[#7c3aed]/10 p-2 rounded border border-[#7c3aed]/20">
+                                            <p className="text-[10px] font-mono text-[#7c3aed] mb-1">NB Prompt for this clip:</p>
+                                            <p className="text-[10px] text-[#e2e8f0]/80">{clip.nbPromptForClip}</p>
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Audio Plan */}
+                              {item.savPrompts.audioPlan && (
+                                <div className="bg-white/5 p-3 rounded border border-[#2a2a3a]">
+                                  <p className="text-[10px] font-mono uppercase tracking-widest text-[#64748b] mb-1">Audio Plan</p>
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${
+                                      item.savPrompts.audioPlan.type === 'silent_text_overlay' ? 'bg-[#64748b]/20 text-[#64748b] border-[#64748b]/30' :
+                                      item.savPrompts.audioPlan.type === 'trending_audio' ? 'bg-[#7c3aed]/20 text-[#7c3aed] border-[#7c3aed]/30' :
+                                      item.savPrompts.audioPlan.type === 'voiceover' ? 'bg-[#06b6d4]/20 text-[#06b6d4] border-[#06b6d4]/30' :
+                                      'bg-[#10b981]/20 text-[#10b981] border-[#10b981]/30'
+                                    }`}>{item.savPrompts.audioPlan.type.replace(/_/g, ' ')}</span>
+                                  </div>
+                                  <p className="text-xs text-[#e2e8f0]/90">{item.savPrompts.audioPlan.description}</p>
+                                  {item.savPrompts.audioPlan.syncNotes && (
+                                    <p className="text-[10px] text-[#64748b] mt-1">Sync: {item.savPrompts.audioPlan.syncNotes}</p>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Editing Notes */}
+                              {item.savPrompts.editingNotes && (
+                                <div className="bg-white/5 p-3 rounded border border-[#2a2a3a]">
+                                  <p className="text-[10px] font-mono uppercase tracking-widest text-[#64748b] mb-1">Editing Notes</p>
+                                  <p className="text-xs text-[#e2e8f0]/90">{item.savPrompts.editingNotes}</p>
                                 </div>
                               )}
 
                               {/* NB Prompt */}
                               <div>
                                 <div className="flex items-center justify-between mb-2">
-                                  <p className="text-[10px] font-mono uppercase tracking-widest opacity-50">NB Prompt</p>
-                                  <button onClick={() => copyToClipboard(item.savPrompts!.nbPrompt, item.id + '-nb')} className="text-[10px] font-mono opacity-50 hover:opacity-100 flex items-center gap-1">
+                                  <p className="text-[10px] font-mono uppercase tracking-widest text-[#64748b]">NB Prompt</p>
+                                  <button onClick={() => copyToClipboard(item.savPrompts!.nbPrompt, item.id + '-nb')} className="text-[10px] font-mono text-[#64748b] hover:text-[#06b6d4] flex items-center gap-1 transition-colors">
                                     <Copy className="w-2.5 h-2.5" />{copiedId === item.id + '-nb' ? 'Copied!' : 'Copy'}
                                   </button>
                                 </div>
-                                <pre className="text-xs leading-relaxed whitespace-pre-wrap opacity-90 bg-white/5 p-3">{item.savPrompts.nbPrompt || '— No NB prompt extracted —'}</pre>
+                                <pre className="text-xs leading-relaxed whitespace-pre-wrap text-[#e2e8f0]/90 bg-white/5 p-3 rounded border border-[#2a2a3a]">{item.savPrompts.nbPrompt || '— No NB prompt extracted —'}</pre>
                               </div>
 
                               {/* SD Prompt */}
                               {item.savPrompts.sdPrompt && (
                                 <div>
                                   <div className="flex items-center justify-between mb-2">
-                                    <p className="text-[10px] font-mono uppercase tracking-widest opacity-50">SD Prompt (Seedream body pass)</p>
-                                    <button onClick={() => copyToClipboard(item.savPrompts!.sdPrompt!, item.id + '-sd')} className="text-[10px] font-mono opacity-50 hover:opacity-100 flex items-center gap-1">
+                                    <p className="text-[10px] font-mono uppercase tracking-widest text-[#64748b]">SD Prompt (Seedream body pass)</p>
+                                    <button onClick={() => copyToClipboard(item.savPrompts!.sdPrompt!, item.id + '-sd')} className="text-[10px] font-mono text-[#64748b] hover:text-[#06b6d4] flex items-center gap-1 transition-colors">
                                       <Copy className="w-2.5 h-2.5" />{copiedId === item.id + '-sd' ? 'Copied!' : 'Copy'}
                                     </button>
                                   </div>
-                                  <pre className="text-xs leading-relaxed whitespace-pre-wrap opacity-90 bg-white/5 p-3">{item.savPrompts.sdPrompt}</pre>
+                                  <pre className="text-xs leading-relaxed whitespace-pre-wrap text-[#e2e8f0]/90 bg-white/5 p-3 rounded border border-[#2a2a3a]">{item.savPrompts.sdPrompt}</pre>
                                 </div>
                               )}
 
-                              {/* Seedance Prompt */}
-                              {item.savPrompts.seedancePrompt && (
+                              {/* Video Prompt (primary — model-specific) */}
+                              {(item.savPrompts.videoPrompt || item.savPrompts.seedancePrompt || item.savPrompts.klingPrompt) && (
                                 <div>
                                   <div className="flex items-center justify-between mb-2">
-                                    <p className="text-[10px] font-mono uppercase tracking-widest opacity-50">Seedance 2.0 Prompt {item.savPrompts.seedanceCharCount ? `(${item.savPrompts.seedanceCharCount} chars)` : ''}</p>
-                                    <button onClick={() => copyToClipboard(item.savPrompts!.seedancePrompt!, item.id + '-seedance')} className="text-[10px] font-mono opacity-50 hover:opacity-100 flex items-center gap-1">
-                                      <Copy className="w-2.5 h-2.5" />{copiedId === item.id + '-seedance' ? 'Copied!' : 'Copy'}
+                                    <p className="text-[10px] font-mono uppercase tracking-widest text-[#64748b]">
+                                      {item.savPrompts.videoModel === 'cdance' ? 'CDance Prompt' : 'Kling 3.0 Prompt'}
+                                      {item.savPrompts.videoPromptCharCount ? ` (${item.savPrompts.videoPromptCharCount} chars)` :
+                                       item.savPrompts.seedanceCharCount ? ` (${item.savPrompts.seedanceCharCount} chars)` : ''}
+                                      {' '}— Clip 1
+                                    </p>
+                                    <button onClick={() => copyToClipboard(item.savPrompts!.videoPrompt || item.savPrompts!.seedancePrompt || item.savPrompts!.klingPrompt, item.id + '-video')} className="text-[10px] font-mono text-[#64748b] hover:text-[#06b6d4] flex items-center gap-1 transition-colors">
+                                      <Copy className="w-2.5 h-2.5" />{copiedId === item.id + '-video' ? 'Copied!' : 'Copy'}
                                     </button>
                                   </div>
-                                  <pre className="text-xs leading-relaxed whitespace-pre-wrap opacity-90 bg-white/5 p-3">{item.savPrompts.seedancePrompt}</pre>
+                                  <pre className="text-xs leading-relaxed whitespace-pre-wrap text-[#e2e8f0]/90 bg-white/5 p-3 rounded border border-[#2a2a3a]">{item.savPrompts.videoPrompt || item.savPrompts.seedancePrompt || item.savPrompts.klingPrompt}</pre>
                                 </div>
                               )}
 
-                              {/* Kling Prompt */}
-                              {item.savPrompts.klingPrompt && (
-                                <div>
-                                  <div className="flex items-center justify-between mb-2">
-                                    <p className="text-[10px] font-mono uppercase tracking-widest opacity-50">Kling 3.0 Prompt (SFW/IG)</p>
-                                    <button onClick={() => copyToClipboard(item.savPrompts!.klingPrompt, item.id + '-kling')} className="text-[10px] font-mono opacity-50 hover:opacity-100 flex items-center gap-1">
-                                      <Copy className="w-2.5 h-2.5" />{copiedId === item.id + '-kling' ? 'Copied!' : 'Copy'}
-                                    </button>
-                                  </div>
-                                  <pre className="text-xs leading-relaxed whitespace-pre-wrap opacity-90 bg-white/5 p-3">{item.savPrompts.klingPrompt}</pre>
+                              {/* Additional Clip Prompts */}
+                              {item.savPrompts.additionalClipPrompts && item.savPrompts.additionalClipPrompts.length > 0 && (
+                                <div className="space-y-3">
+                                  {item.savPrompts.additionalClipPrompts.map((clipPrompt, i) => (
+                                    <div key={i}>
+                                      <div className="flex items-center justify-between mb-2">
+                                        <p className="text-[10px] font-mono uppercase tracking-widest text-[#64748b]">
+                                          {item.savPrompts!.videoModel === 'cdance' ? 'CDance' : 'Kling'} Prompt — Clip {i + 2}
+                                        </p>
+                                        <button onClick={() => copyToClipboard(clipPrompt, item.id + '-clip-' + (i+2))} className="text-[10px] font-mono text-[#64748b] hover:text-[#06b6d4] flex items-center gap-1 transition-colors">
+                                          <Copy className="w-2.5 h-2.5" />{copiedId === item.id + '-clip-' + (i+2) ? 'Copied!' : 'Copy'}
+                                        </button>
+                                      </div>
+                                      <pre className="text-xs leading-relaxed whitespace-pre-wrap text-[#e2e8f0]/90 bg-white/5 p-3 rounded border border-[#2a2a3a]">{clipPrompt}</pre>
+                                    </div>
+                                  ))}
                                 </div>
                               )}
 
                               {/* Face Forward Note */}
                               {item.savPrompts.faceForwardNote && item.savPrompts.faceForwardNote !== 'N/A' && (
-                                <div className="bg-amber-500/20 border border-amber-400/30 p-3">
-                                  <p className="text-[10px] font-mono uppercase tracking-widest opacity-70 mb-1">⚠️ Face-Forward Adjustment</p>
-                                  <p className="text-xs opacity-90">{item.savPrompts.faceForwardNote}</p>
+                                <div className="bg-[#f59e0b]/10 border border-[#f59e0b]/30 p-3 rounded">
+                                  <p className="text-[10px] font-mono uppercase tracking-widest text-[#f59e0b] mb-1">Face-Forward Adjustment</p>
+                                  <p className="text-xs text-[#e2e8f0]/90">{item.savPrompts.faceForwardNote}</p>
                                 </div>
                               )}
 
                               {/* Text Overlays */}
                               <div>
-                                <p className="text-[10px] font-mono uppercase tracking-widest opacity-50 mb-2">Text Overlay Options</p>
+                                <p className="text-[10px] font-mono uppercase tracking-widest text-[#64748b] mb-2">Text Overlay Options</p>
                                 <div className="space-y-2">
                                   {item.savPrompts.textOverlays.map((overlay, i) => (
-                                    <div key={i} className="flex items-center justify-between bg-white/5 p-2.5">
-                                      <span className="text-xs italic opacity-90">"{overlay}"</span>
-                                      <button onClick={() => copyToClipboard(overlay, item.id + '-overlay-' + i)} className="text-[10px] font-mono opacity-40 hover:opacity-100 ml-3 shrink-0 flex items-center gap-1">
+                                    <div key={i} className="flex items-center justify-between bg-white/5 p-2.5 rounded border border-[#2a2a3a]">
+                                      <span className="text-xs italic text-[#e2e8f0]/90">"{overlay}"</span>
+                                      <button onClick={() => copyToClipboard(overlay, item.id + '-overlay-' + i)} className="text-[10px] font-mono text-[#64748b] hover:text-[#06b6d4] ml-3 shrink-0 flex items-center gap-1 transition-colors">
                                         <Copy className="w-2.5 h-2.5" />{copiedId === item.id + '-overlay-' + i ? 'Copied!' : 'Copy'}
                                       </button>
                                     </div>
@@ -1387,26 +1536,26 @@ export default function App() {
                               {/* Caption */}
                               <div>
                                 <div className="flex items-center justify-between mb-2">
-                                  <p className="text-[10px] font-mono uppercase tracking-widest opacity-50">IG Caption</p>
-                                  <button onClick={() => copyToClipboard(item.savPrompts!.caption, item.id + '-caption')} className="text-[10px] font-mono opacity-50 hover:opacity-100 flex items-center gap-1">
+                                  <p className="text-[10px] font-mono uppercase tracking-widest text-[#64748b]">IG Caption</p>
+                                  <button onClick={() => copyToClipboard(item.savPrompts!.caption, item.id + '-caption')} className="text-[10px] font-mono text-[#64748b] hover:text-[#06b6d4] flex items-center gap-1 transition-colors">
                                     <Copy className="w-2.5 h-2.5" />{copiedId === item.id + '-caption' ? 'Copied!' : 'Copy'}
                                   </button>
                                 </div>
-                                <div className="bg-white/5 p-2.5 text-xs italic opacity-90">"{item.savPrompts.caption}"</div>
+                                <div className="bg-white/5 p-2.5 text-xs italic text-[#e2e8f0]/90 rounded border border-[#2a2a3a]">"{item.savPrompts.caption}"</div>
                               </div>
 
                               {/* Hashtags */}
                               {item.savPrompts.hashtags && item.savPrompts.hashtags.length > 0 && (
                                 <div>
                                   <div className="flex items-center justify-between mb-2">
-                                    <p className="text-[10px] font-mono uppercase tracking-widest opacity-50">Hashtags (first comment)</p>
-                                    <button onClick={() => copyToClipboard(item.savPrompts!.hashtags!.map(h => h.startsWith('#') ? h : `#${h}`).join(' '), item.id + '-hashtags')} className="text-[10px] font-mono opacity-50 hover:opacity-100 flex items-center gap-1">
+                                    <p className="text-[10px] font-mono uppercase tracking-widest text-[#64748b]">Hashtags (first comment)</p>
+                                    <button onClick={() => copyToClipboard(item.savPrompts!.hashtags!.map(h => h.startsWith('#') ? h : `#${h}`).join(' '), item.id + '-hashtags')} className="text-[10px] font-mono text-[#64748b] hover:text-[#06b6d4] flex items-center gap-1 transition-colors">
                                       <Copy className="w-2.5 h-2.5" />{copiedId === item.id + '-hashtags' ? 'Copied!' : 'Copy'}
                                     </button>
                                   </div>
-                                  <div className="bg-white/5 p-2.5 text-xs opacity-90 flex gap-2 flex-wrap">
+                                  <div className="bg-white/5 p-2.5 text-xs text-[#e2e8f0]/90 flex gap-2 flex-wrap rounded border border-[#2a2a3a]">
                                     {item.savPrompts.hashtags.map((tag, i) => (
-                                      <span key={i} className="bg-white/10 px-2 py-0.5 rounded">{tag.startsWith('#') ? tag : `#${tag}`}</span>
+                                      <span key={i} className="bg-[#7c3aed]/20 text-[#7c3aed] px-2 py-0.5 rounded border border-[#7c3aed]/20">{tag.startsWith('#') ? tag : `#${tag}`}</span>
                                     ))}
                                   </div>
                                 </div>
@@ -1417,12 +1566,12 @@ export default function App() {
                           {/* Full Analysis */}
                           <div>
                             <div className="flex items-center justify-between mb-3">
-                              <p className="text-[10px] font-mono uppercase tracking-widest opacity-50">Full Analysis</p>
-                              <button onClick={() => copyToClipboard(item.fullAnalysis, item.id + '-full')} className="text-[10px] font-mono opacity-50 hover:opacity-100 flex items-center gap-1">
+                              <p className="text-[10px] font-mono uppercase tracking-widest text-[#64748b]">Full Analysis</p>
+                              <button onClick={() => copyToClipboard(item.fullAnalysis, item.id + '-full')} className="text-[10px] font-mono text-[#64748b] hover:text-[#e2e8f0] flex items-center gap-1 transition-colors">
                                 <Copy className="w-2.5 h-2.5" />{copiedId === item.id + '-full' ? 'Copied!' : 'Copy'}
                               </button>
                             </div>
-                            <div className="markdown-body text-sm max-h-[500px] overflow-y-auto border border-[#141414]/10 p-4">
+                            <div className="markdown-body text-sm max-h-[500px] overflow-y-auto border border-[#2a2a3a] p-4 rounded bg-[#12121c]">
                               <Markdown remarkPlugins={[remarkGfm]}>{item.fullAnalysis}</Markdown>
                             </div>
                           </div>
@@ -1438,11 +1587,11 @@ export default function App() {
       </AnimatePresence>
 
       {/* Footer */}
-      <footer className="max-w-7xl mx-auto p-6 mt-12 border-t border-[#141414]/10 flex flex-col md:flex-row justify-between items-center gap-4">
-        <p className="text-[10px] font-mono uppercase tracking-widest opacity-40">© 2026 UGC Reverse-Engineering Analyst Tool</p>
+      <footer className="max-w-7xl mx-auto p-6 mt-12 border-t border-[#2a2a3a] flex flex-col md:flex-row justify-between items-center gap-4">
+        <p className="text-[10px] font-mono uppercase tracking-widest text-[#64748b]">© 2026 UGC Reverse-Engineering Analyst Tool</p>
         <div className="flex gap-6">
-          <a href="#" className="text-[10px] font-mono uppercase tracking-widest opacity-40 hover:opacity-100 transition-opacity">Documentation</a>
-          <a href="#" className="text-[10px] font-mono uppercase tracking-widest opacity-40 hover:opacity-100 transition-opacity">API Status</a>
+          <a href="#" className="text-[10px] font-mono uppercase tracking-widest text-[#64748b] hover:text-[#e2e8f0] transition-colors">Documentation</a>
+          <a href="#" className="text-[10px] font-mono uppercase tracking-widest text-[#64748b] hover:text-[#e2e8f0] transition-colors">API Status</a>
         </div>
       </footer>
     </div>
