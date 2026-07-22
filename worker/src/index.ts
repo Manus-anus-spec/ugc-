@@ -7,6 +7,7 @@ import type { Env } from './env';
 import { authenticate } from './auth';
 import { err, handleOptions, json } from './http';
 import { analyze } from './routes/analyze';
+import { generate, getGeneration, listGenerations } from './routes/generate';
 import {
   createFormat, deleteFormat, getFormat, getVersion, listFormats, listVersions, updateFormat,
 } from './routes/formats';
@@ -34,6 +35,14 @@ export default {
         return await analyze(req, env, ctx);
       }
 
+      // ── generate ──
+      if (m === 'POST' && seg[0] === 'generate' && seg.length === 1) {
+        return await generate(req, env, ctx);
+      }
+      if (m === 'GET' && seg[0] === 'generations' && seg[1] && seg.length === 2) {
+        return await getGeneration(req, env, seg[1]);
+      }
+
       // ── formats ──
       if (seg[0] === 'formats') {
         if (seg.length === 1) {
@@ -45,6 +54,9 @@ export default {
           if (m === 'GET') return await getFormat(req, env, id);
           if (m === 'PUT') return await updateFormat(req, env, id);
           if (m === 'DELETE') return await deleteFormat(req, env, id);
+        }
+        if (id && seg[2] === 'generations' && m === 'GET' && seg.length === 3) {
+          return await listGenerations(req, env, id);
         }
         if (id && seg[2] === 'versions') {
           if (m === 'GET' && seg.length === 3) return await listVersions(req, env, id);

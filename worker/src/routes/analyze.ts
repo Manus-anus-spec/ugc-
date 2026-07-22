@@ -29,6 +29,14 @@ function zodIssuesToText(error: z.ZodError): string {
 }
 
 export async function analyze(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  // Client disconnects must not cancel the invocation and orphan a paid analysis —
+  // waitUntil keeps the pipeline (and its D1 save) running to completion.
+  const work = runAnalyze(req, env, ctx);
+  ctx.waitUntil(work.then(() => undefined, () => undefined));
+  return work;
+}
+
+async function runAnalyze(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   // ── 1. Parse input ──
   let form: FormData;
   try {

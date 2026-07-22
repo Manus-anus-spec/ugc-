@@ -1,4 +1,6 @@
-import type { AnalyzeResponse, FormatDna, FormatSummary } from '@shared/contract';
+import type {
+  AnalyzeResponse, FormatDna, FormatSummary, GenerationRun, ModelProfile, VariationStrength,
+} from '@shared/contract';
 import { ANALYZE_FIELDS } from '@shared/fields';
 import { apiFetch } from './client';
 
@@ -49,4 +51,28 @@ export function deleteFormat(id: string): Promise<{ deleted: string }> {
 
 export function listProfiles(): Promise<{ items: { id: string; name: string; version: number; updatedAt: string }[] }> {
   return apiFetch('/profiles');
+}
+
+export function getProfile(id: string): Promise<ModelProfile> {
+  return apiFetch(`/profiles/${id}`);
+}
+
+export function generateIdeations(
+  formatId: string, profileId: string, variationStrength: VariationStrength,
+): Promise<GenerationRun> {
+  return apiFetch('/generate', {
+    method: 'POST',
+    json: { formatId, profileId, variationStrength },
+    timeoutMs: 570_000,
+  });
+}
+
+export function listGenerations(formatId: string): Promise<{
+  items: { id: string; profileId: string; variationStrength: string; status: string; createdAt: string }[];
+}> {
+  return apiFetch(`/formats/${formatId}/generations`);
+}
+
+export function getGeneration(id: string): Promise<GenerationRun> {
+  return apiFetch(`/generations/${id}`);
 }

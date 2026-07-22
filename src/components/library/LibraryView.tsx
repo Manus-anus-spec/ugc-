@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowLeft, Clock, Film, Loader2, Search, Trash2 } from 'lucide-react';
+import { ArrowLeft, Clock, Film, Loader2, Search, Sparkles, Trash2 } from 'lucide-react';
 import type { FormatDna, FormatSummary } from '@shared/contract';
 import { getFormat, type FormatDetail } from '../../api';
 import { useLibrary } from '../../hooks/useLibrary';
@@ -39,7 +39,9 @@ function FormatCard({ f, onOpen }: { f: FormatSummary; onOpen: () => void }) {
   );
 }
 
-function DetailPane({ id, onBack, onDeleted }: { id: string; onBack: () => void; onDeleted: () => void }) {
+function DetailPane({ id, onBack, onDeleted, onGenerate }: {
+  id: string; onBack: () => void; onDeleted: () => void; onGenerate: (formatId: string) => void;
+}) {
   const [detail, setDetail] = useState<FormatDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -58,6 +60,15 @@ function DetailPane({ id, onBack, onDeleted }: { id: string; onBack: () => void;
           <ArrowLeft size={14} /> library
         </button>
         <div className="flex gap-2">
+          {detail && detail.summary.schemaVersion !== '0-legacy' && (
+            <button
+              onClick={() => onGenerate(id)}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-orange text-canvas text-[11px] font-semibold
+                         hover:bg-orange-soft transition-colors cursor-pointer"
+            >
+              <Sparkles size={12} /> Generate
+            </button>
+          )}
           {detail && <CopyButton text={JSON.stringify(detail.dna, null, 2)} label="copy json" />}
           <button
             onClick={() => { if (confirm('Delete this format from the library?')) void onDeleted(); }}
@@ -97,7 +108,7 @@ function DetailPane({ id, onBack, onDeleted }: { id: string; onBack: () => void;
   );
 }
 
-export function LibraryView() {
+export function LibraryView({ onGenerate }: { onGenerate: (formatId: string) => void }) {
   const { query, setQuery, items, total, loading, error, remove } = useLibrary();
   const [openId, setOpenId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -109,6 +120,7 @@ export function LibraryView() {
           id={openId}
           onBack={() => setOpenId(null)}
           onDeleted={async () => { await remove(openId); setOpenId(null); }}
+          onGenerate={onGenerate}
         />
       </div>
     );

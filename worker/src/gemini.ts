@@ -98,7 +98,7 @@ export interface GeminiJsonResult {
 }
 
 interface GeminiChunk {
-  candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
+  candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] }; finishReason?: string }[];
   promptFeedback?: { blockReason?: string };
 }
 
@@ -109,6 +109,26 @@ interface GeminiChunk {
  * subrequests after ~100s with a 524 — long Pro video analyses routinely exceed that.
  * SSE delivers headers + chunks immediately, so the connection stays alive.
  */
+/**
+ * Gemini's constrained decoder rejects (400 INVALID_ARGUMENT) schemas that put
+ * minItems/maxItems on arrays of large object items — verified empirically 2026-07-22.
+ * Strip array bounds before sending; enforce counts in application code instead.
+ */
+export function geminiSafeSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const clone = JSON.parse(JSON.stringify(schema)) as Record<string, unknown>;
+  const strip = (node: unknown): void => {
+    if (Array.isArray(node)) { node.forEach(strip); return; }
+    if (node && typeof node === 'object') {
+      const o = node as Record<string, unknown>;
+      delete o.minItems;
+      delete o.maxItems;
+      Object.values(o).forEach(strip);
+    }
+  };
+  strip(clone);
+  return clone;
+}
+
 export async function callGeminiJson(opts: GeminiJsonCallOptions): Promise<GeminiJsonResult> {
   const supportsJsonSchema = opts.model.startsWith('gemini-3');
 
@@ -117,7 +137,7 @@ export async function callGeminiJson(opts: GeminiJsonCallOptions): Promise<Gemin
     maxOutputTokens: opts.maxOutputTokens ?? 65536,
     responseMimeType: 'application/json',
     ...(opts.mediaResolution ? { mediaResolution: opts.mediaResolution } : {}),
-    ...(supportsJsonSchema ? { responseJsonSchema: opts.jsonSchema } : {}),
+    ...(supportsJsonSchema ? { responseJsonSchema: geminiSafeSchema(opts.jsonSchema) } : {}),
   };
 
   const parts: GeminiPart[] = supportsJsonSchema
@@ -162,13 +182,20 @@ export async function callGeminiJson(opts: GeminiJsonCallOptions): Promise<Gemin
       }
       const candidate = chunk.candidates?.[0];
       if (candidate?.content?.parts) {
-        for (const p of candidate.content.parts) text += p.text ?? '';
+        // thinking models stream thought-summary parts (thought: true) — they are
+        // NOT part of the answer and corrupt JSON output if concatenated
+        for (const p of candidate.content.parts) {
+          if (!p.thought) text += p.text ?? '';
+        }
       }
       if (candidate?.finishReason) finishReason = candidate.finishReason;
     }
   }
 
   if (!text) throw new Error(`Gemini returned an empty response (finishReason: ${finishReason})`);
+  if (finishReason === 'MAX_TOKENS') {
+    throw new Error(`Gemini response truncated at maxOutputTokens (${opts.maxOutputTokens ?? 65536}) — output incomplete`);
+  }
   return { text, finishReason };
 }
 
