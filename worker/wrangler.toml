@@ -1,0 +1,26 @@
+# ugc-api — the ONE worker replacing ugc-worker + sav-content-library app routes
+# 🔑 Khian before first deploy:
+#   1. wrangler d1 create ugc_library         → paste database_id below
+#   2. wrangler d1 migrations apply ugc_library --remote
+#   3. wrangler secret put GEMINI_API_KEY
+#      wrangler secret put RAPIDAPI_KEY
+#      wrangler secret put API_TOKENS         → JSON: {"khian":"<sha256hex>","niko":"<sha256hex>"}
+#      (hash a token: echo -n "<the-token>" | shasum -a 256)
+#   4. wrangler deploy
+name = "ugc-api"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+
+[vars]
+# Pinned from live ListModels 2026-07-21 (best available Pro; avoid "-latest" aliases — traceability).
+GEMINI_MODEL = "gemini-3.1-pro-preview"
+GEMINI_MODEL_FALLBACK = "gemini-2.5-pro"
+ALLOWED_ORIGINS = "https://manus-anus-spec.github.io,http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ugc_library"
+database_id = "66250432-78fa-46ff-adbd-3987d131dddd"
+
+[observability]
+enabled = true

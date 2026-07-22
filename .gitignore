@@ -6,3 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
+# worker / migration artifacts
+.wrangler/
+worker/node_modules/
+*-snapshot.json
+migration-import.sql
+.omc/
