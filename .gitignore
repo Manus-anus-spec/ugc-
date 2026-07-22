@@ -12,3 +12,4 @@ worker/node_modules/
 *-snapshot.json
 migration-import.sql
 .omc/
+SECRETS.local.md
