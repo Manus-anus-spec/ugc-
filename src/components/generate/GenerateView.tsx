@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2, RotateCcw, Sparkles, XCircle } from 'lucide-react';
 import type { FormatSummary, GenerationRun, Ideation, VariationStrength } from '@shared/contract';
-import { generateIdeations, getGeneration, listFormats, listGenerations, listProfiles } from '../../api';
+import { generateIdeations, getGeneration, listFormats, listGenerations } from '../../api';
 import { ApiRequestError } from '../../api/client';
 import { ArchetypeChip, CopyButton, KV, Section } from '../ui';
 import { BeatPromptCard } from './BeatPromptCard';
@@ -87,9 +87,7 @@ function IdeationDetail({ ideation }: { ideation: Ideation }) {
 
 export function GenerateView({ presetFormatId }: { presetFormatId: string | null }) {
   const [formats, setFormats] = useState<FormatSummary[]>([]);
-  const [profiles, setProfiles] = useState<{ id: string; name: string }[]>([]);
   const [formatId, setFormatId] = useState(presetFormatId ?? '');
-  const [profileId, setProfileId] = useState('');
   const [strength, setStrength] = useState<VariationStrength>('close');
   const [running, setRunning] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -105,11 +103,6 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
 
   useEffect(() => {
     void listFormats({ limit: 200 }).then((r) => setFormats(r.items.filter((f) => f.schemaVersion !== '0-legacy')));
-    void listProfiles().then((r) => {
-      setProfiles(r.items);
-      if (r.items[0] && !profileId) setProfileId(r.items[0].id);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => { if (presetFormatId) setFormatId(presetFormatId); }, [presetFormatId]);
@@ -119,7 +112,7 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
     const t0 = Date.now();
     const timer = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
     try {
-      const result = await generateIdeations(formatId, profileId, strength);
+      const result = await generateIdeations(formatId, strength);
       setRun(result);
       setPicked(0);
     } catch (e) {
@@ -138,7 +131,7 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
       <div className="bg-surface border border-hairline rounded-xl p-5 space-y-4">
         <div className="flex items-center gap-2 text-dim">
           <Sparkles size={15} className="text-orange" />
-          <h2 className="text-xs font-mono uppercase tracking-widest">Format × Profile → 3 ideations</h2>
+          <h2 className="text-xs font-mono uppercase tracking-widest">Format → 3 ideations · character-neutral</h2>
         </div>
         <div className="flex flex-wrap gap-3">
           <select
@@ -148,13 +141,6 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
           >
             <option value="">choose a format…</option>
             {formats.map((f) => <option key={f.id} value={f.id}>{f.title} · {f.archetype}</option>)}
-          </select>
-          <select
-            value={profileId}
-            onChange={(e) => setProfileId(e.target.value)}
-            className="bg-canvas border border-hairline rounded-md px-3 py-2 text-sm focus:outline-none focus:border-orange"
-          >
-            {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
           <div className="flex rounded-md border border-hairline overflow-hidden">
             {STRENGTHS.map((s) => (
@@ -171,11 +157,11 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
           </div>
           <button
             onClick={() => void start()}
-            disabled={running || !formatId || !profileId}
+            disabled={running || !formatId}
             className="bg-orange text-canvas font-semibold rounded-md px-5 py-2 text-sm
                        hover:bg-orange-soft transition-colors disabled:opacity-40 cursor-pointer"
           >
-            {running ? 'ideating…' : 'Generate'}
+            {running ? 'ideating…' : 'Generate ideation'}
           </button>
         </div>
         {selectedFormat && (

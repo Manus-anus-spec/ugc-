@@ -9,8 +9,9 @@ import { err, handleOptions, json } from './http';
 import { analyze } from './routes/analyze';
 import { generate, getGeneration, listGenerations } from './routes/generate';
 import {
-  createFormat, deleteFormat, getFormat, getVersion, listFormats, listVersions, updateFormat,
+  createFormat, deleteFormat, getFormat, getVersion, listFormats, listVersions, reindexFts, updateFormat,
 } from './routes/formats';
+import { exportBriefs, exportFormat, exportJson } from './routes/export';
 import { deleteProfile, getProfile, listProfiles, putProfile } from './routes/profiles';
 import { getJob } from './routes/jobs';
 
@@ -58,6 +59,9 @@ export default {
         if (id && seg[2] === 'generations' && m === 'GET' && seg.length === 3) {
           return await listGenerations(req, env, id);
         }
+        if (id && seg[2] === 'export' && m === 'GET' && seg.length === 3) {
+          return await exportFormat(req, env, id);
+        }
         if (id && seg[2] === 'versions') {
           if (m === 'GET' && seg.length === 3) return await listVersions(req, env, id);
           if (m === 'GET' && seg.length === 4) {
@@ -82,6 +86,17 @@ export default {
       // ── jobs ──
       if (m === 'GET' && seg[0] === 'jobs' && seg[1] && seg.length === 2) {
         return await getJob(req, env, seg[1]);
+      }
+
+      // ── exports ──
+      if (m === 'GET' && seg[0] === 'export') {
+        if (seg[1] === 'json' && seg.length === 2) return await exportJson(req, env);
+        if (seg[1] === 'briefs' && seg.length === 2) return await exportBriefs(req, env);
+      }
+
+      // ── admin ──
+      if (m === 'POST' && seg[0] === 'admin' && seg[1] === 'reindex-fts' && seg.length === 2) {
+        return await reindexFts(req, env);
       }
 
       return err('not_found', `no route: ${m} ${url.pathname}`, 404, req, env);

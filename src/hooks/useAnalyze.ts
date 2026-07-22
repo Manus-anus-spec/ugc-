@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormatDna } from '@shared/contract';
-import { analyzeFile, analyzeUrl } from '../api';
+import { analyzeFile, analyzeUrl, getFormat, getJob } from '../api';
 import { ApiRequestError } from '../api/client';
 
 export type AnalyzeStatus = 'idle' | 'running' | 'done' | 'error';
@@ -28,8 +28,22 @@ export function useAnalyze() {
     timerRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
     try {
       const res = input.file ? await analyzeFile(input.file) : await analyzeUrl(input.url ?? '');
-      if (!res.format) throw new Error('analysis returned no format');
-      setResult(res.format);
+      let format = res.format ?? null;
+      if (!format && res.job) {
+        // long video → async job: poll every 5s (worker keeps working server-side)
+        for (let i = 0; i < 180; i++) {
+          await new Promise((r) => setTimeout(r, 5000));
+          const job = await getJob(res.job.id);
+          if (job.status === 'done' && job.resultFormatId) {
+            const detail = await getFormat(job.resultFormatId);
+            format = detail.dna as FormatDna;
+            break;
+          }
+          if (job.status === 'error') throw new Error(job.error ?? 'analysis job failed');
+        }
+      }
+      if (!format) throw new Error('analysis returned no format');
+      setResult(format);
       setStatus('done');
     } catch (e) {
       if (e instanceof ApiRequestError) setError({ code: e.api.code, message: e.api.error });

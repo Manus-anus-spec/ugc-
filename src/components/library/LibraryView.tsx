@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowLeft, Clock, Film, Loader2, Search, Sparkles, Trash2 } from 'lucide-react';
+import { ArrowLeft, Check, Clock, FileDown, Film, History, Loader2, Search, Sparkles, Trash2 } from 'lucide-react';
 import type { FormatDna, FormatSummary } from '@shared/contract';
-import { getFormat, type FormatDetail } from '../../api';
+import { exportMarkdown, getFormat, getVersion, listVersions, type FormatDetail } from '../../api';
 import { useLibrary } from '../../hooks/useLibrary';
 import { DnaReport } from '../analyze/DnaReport';
 import { ArchetypeChip, CopyButton, RatingBadge } from '../ui';
@@ -44,11 +44,23 @@ function DetailPane({ id, onBack, onDeleted, onGenerate }: {
 }) {
   const [detail, setDetail] = useState<FormatDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [versions, setVersions] = useState<{ version: number; created_at: string }[]>([]);
+  const [snapshot, setSnapshot] = useState<{ version: number; dna: FormatDna } | null>(null);
+  const [mdCopied, setMdCopied] = useState(false);
 
   useEffect(() => {
     setDetail(null);
+    setSnapshot(null);
     getFormat(id).then(setDetail).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+    listVersions(id).then((r) => setVersions(r.versions)).catch(() => {});
   }, [id]);
+
+  const copyMarkdown = async () => {
+    const md = await exportMarkdown(id);
+    await navigator.clipboard.writeText(md);
+    setMdCopied(true);
+    setTimeout(() => setMdCopied(false), 1500);
+  };
 
   return (
     <div className="space-y-4">
@@ -67,6 +79,16 @@ function DetailPane({ id, onBack, onDeleted, onGenerate }: {
                          hover:bg-orange-soft transition-colors cursor-pointer"
             >
               <Sparkles size={12} /> Generate
+            </button>
+          )}
+          {detail && detail.summary.schemaVersion !== '0-legacy' && (
+            <button
+              onClick={() => void copyMarkdown()}
+              className="inline-flex items-center gap-1.5 px-2 py-1 rounded border border-hairline text-[11px] font-mono
+                         text-dim hover:text-cream hover:border-pitch transition-colors cursor-pointer"
+            >
+              {mdCopied ? <Check size={12} className="text-sfw" /> : <FileDown size={12} />}
+              {mdCopied ? 'copied' : 'copy brief (md)'}
             </button>
           )}
           {detail && <CopyButton text={JSON.stringify(detail.dna, null, 2)} label="copy json" />}
@@ -101,7 +123,39 @@ function DetailPane({ id, onBack, onDeleted, onGenerate }: {
         </div>
       )}
 
-      {detail && detail.summary.schemaVersion !== '0-legacy' && (
+      {versions.length > 0 && detail && (
+        <div className="flex flex-wrap items-center gap-2">
+          <History size={12} className="text-dim" />
+          <button
+            onClick={() => setSnapshot(null)}
+            className={`text-[11px] font-mono border rounded px-2 py-0.5 transition-colors cursor-pointer
+              ${!snapshot ? 'border-orange text-orange' : 'border-hairline text-dim hover:text-cream'}`}
+          >
+            v{detail.summary.version} current
+          </button>
+          {versions.map((v) => (
+            <button
+              key={v.version}
+              onClick={() => void getVersion(id, v.version).then((r) => setSnapshot({ version: r.version, dna: r.dna }))}
+              className={`text-[11px] font-mono border rounded px-2 py-0.5 transition-colors cursor-pointer
+                ${snapshot?.version === v.version ? 'border-orange text-orange' : 'border-hairline text-dim hover:text-cream'}`}
+            >
+              v{v.version}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {snapshot && (
+        <>
+          <p className="text-[11px] font-mono text-borderline">
+            viewing snapshot v{snapshot.version} — read-only history, current is v{detail?.summary.version}
+          </p>
+          <DnaReport dna={snapshot.dna} />
+        </>
+      )}
+
+      {!snapshot && detail && detail.summary.schemaVersion !== '0-legacy' && (
         <DnaReport dna={detail.dna as FormatDna} />
       )}
     </div>

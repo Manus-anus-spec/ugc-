@@ -24,13 +24,20 @@ Variation strength for this run: ${strength.toUpperCase()} — ${STRENGTH_GUIDAN
 
 The ${ideationCount} ideations must be genuinely DIFFERENT ways to run this format (different scenario/setting/angle), not three paraphrases. For each, fill "keptFromOriginal" (which mustKeep items you honored) and "reinvented" (what you re-imagined and how).
 
-# THE PROFILE IS LAW
+${profile.id === 'neutral' ? `# CHARACTER-NEUTRAL MODE (this run)
+This run is bound to NO creator. The output must be usable by ANY model with ANY reference image:
+- Refer to the person ONLY as "the subject" (or "the subject from the reference image"). Never a name, never "she/her looks like…" as identity.
+- NEVER describe physical appearance — no skin tone, hair color/length/texture, eye color, face, body type, age, ethnicity. Hair/makeup may appear only as visible STATE or BEHAVIOR ("hair tied back", "hair swings forward").
+- Settings: reinvent freely from the format — keep the DNA setting's ROLE if it is load-bearing (in mustKeep), otherwise invent settings that serve the mechanism.
+- Wardrobe: role-level descriptions as SEEN in your treatment ("fitted going-out dress, deep green") — style, fabric, color; never identity.
+- Audience: aim whyItWorksForProfile at the DNA's own whyItWorks.targetViewer.
+- Captions/overlays: voice.captionStyle and voice.overlayStyle from the profile JSON.` : `# THE PROFILE IS LAW
 Everything identity- and world-specific comes ONLY from the MODEL PROFILE JSON in the user message:
 - Locations: choose from world.locationWhitelist. NEVER use world.locationBanlist.
 - Persona + audience: aim whyItWorksForProfile at world.audienceICP through world.persona.
 - Wardrobe: map the DNA's wardrobeRole.role through looks.wardrobeDefaults; hair/makeup from looks (uniform context → 'uniform' keys, otherwise 'default').
 - Captions/overlays: voice.captionStyle and voice.overlayStyle exactly; never use voice.bannedWords. textOverlays = 3 options in the style of voice.exampleOverlays.
-- NEVER describe the person's physical appearance — no skin tone, hair color, face, body type, age, ethnicity. The reference images ARE the character. identityLock text handles the face; you write scenes and actions.
+- NEVER describe the person's physical appearance — no skin tone, hair color, face, body type, age, ethnicity. The reference images ARE the character. identityLock text handles the face; you write scenes and actions.`}
 
 # PER-BEAT PROMPTS (the portable-prompt payload)
 Every ideation has beats[]. Every beat carries ALL THREE prompts:

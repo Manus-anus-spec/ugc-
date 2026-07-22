@@ -51,6 +51,23 @@ export function tagStatements(env: Env, formatId: string, tags: string[]): D1Pre
   return stmts;
 }
 
+/** FTS sync — one row per format, replaced wholesale on insert/update. */
+export function ftsSyncStatements(env: Env, stored: FormatDna, tags: string[]): D1PreparedStatement[] {
+  return [
+    env.DB.prepare('DELETE FROM formats_fts WHERE id = ?').bind(stored.id),
+    env.DB.prepare(
+      'INSERT INTO formats_fts (id, title, archetype, hook_text, why_it_works, tags) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(
+      stored.id,
+      stored.title,
+      stored.archetype,
+      `${stored.hook.openingVisual} ${stored.hook.firstLineOrText ?? ''} ${stored.hook.mechanism}`,
+      `${stored.whyItWorks.mechanism} ${stored.whyItWorks.retentionDrivers.join(' ')} ${stored.whyItWorks.targetViewer}`,
+      tags.join(' '),
+    ),
+  ];
+}
+
 /** The one way a FormatDNA becomes a row — used by /analyze and POST /formats alike. */
 export function formatInsertStatements(env: Env, stored: FormatDna, tags: string[], now: string): D1PreparedStatement[] {
   return [
@@ -65,6 +82,7 @@ export function formatInsertStatements(env: Env, stored: FormatDna, tags: string
       JSON.stringify(stored), now, now,
     ),
     ...tagStatements(env, stored.id, tags),
+    ...ftsSyncStatements(env, stored, tags),
   ];
 }
 

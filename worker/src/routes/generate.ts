@@ -11,6 +11,7 @@ import { API_VERSION, type Env } from '../env';
 import { err, json, newId, nowIso } from '../http';
 import { callGeminiJson } from '../gemini';
 import { applySanitizeMap, enforceIdeation, type LintViolation } from '../generate/rules';
+import { NEUTRAL_PROFILE } from '../generate/neutral';
 import {
   buildGeneratorInstruction, buildGeneratorRepairPrompt, buildGeneratorUserMessage, buildLintRepairPrompt,
 } from '../generate/prompt';
@@ -19,7 +20,8 @@ const IDEATION_COUNT = 3;
 
 const RequestSchema = z.object({
   formatId: z.string(),
-  profileId: z.string(),
+  /** Omit for the default character-neutral run; pass a profile id to bind identity (optional layer). */
+  profileId: z.string().default('neutral'),
   variationStrength: VariationStrengthSchema.default('close'),
 });
 
@@ -62,12 +64,16 @@ async function runGeneration(
   if (formatRow.schema_version === '0-legacy') {
     return err('legacy_format', 'this is a migrated legacy entry with no clean DNA — re-analyze the source video first', 422, req, env);
   }
-  const profileRow = await env.DB.prepare('SELECT profile FROM profiles WHERE id = ?')
-    .bind(profileId).first<{ profile: string }>();
-  if (!profileRow) return err('not_found', `profile ${profileId} not found`, 404, req, env);
-
+  let profile: ModelProfile;
+  if (profileId === 'neutral') {
+    profile = NEUTRAL_PROFILE;   // built-in, never from D1 — cannot be edited into carrying identity
+  } else {
+    const profileRow = await env.DB.prepare('SELECT profile FROM profiles WHERE id = ?')
+      .bind(profileId).first<{ profile: string }>();
+    if (!profileRow) return err('not_found', `profile ${profileId} not found`, 404, req, env);
+    profile = ModelProfileSchema.parse(JSON.parse(profileRow.profile)) as ModelProfile;
+  }
   const dna = JSON.parse(formatRow.dna) as FormatDna;
-  const profile = ModelProfileSchema.parse(JSON.parse(profileRow.profile)) as ModelProfile;
 
   // ── Layer 1 (pre): sanitize the LLM input; stored DNA keeps raw observations ──
   const dnaForLlm = applySanitizeMap(JSON.stringify(dna, null, 1), profile);

@@ -18,6 +18,14 @@ const SAFETY_SETTINGS = [
 export interface GeminiFile {
   uri: string;
   name: string;
+  /** From File API videoMetadata once ACTIVE — drives resolution tiering + async routing. */
+  durationSec?: number;
+}
+
+function parseDuration(v: unknown): number | undefined {
+  if (typeof v !== 'string') return undefined;
+  const n = parseFloat(v.replace(/s$/, ''));
+  return Number.isFinite(n) ? n : undefined;
 }
 
 export async function uploadToGemini(apiKey: string, videoBuffer: ArrayBuffer, mimeType: string): Promise<GeminiFile> {
@@ -49,22 +57,30 @@ export async function uploadToGemini(apiKey: string, videoBuffer: ArrayBuffer, m
   if (file.state === 'PROCESSING') {
     return pollUntilActive(apiKey, file.name, file.uri);
   }
-  return { uri: file.uri, name: file.name };
+  return fetchFileInfo(apiKey, file.name, file.uri);
+}
+
+async function fetchFileInfo(apiKey: string, fileName: string, fileUri: string): Promise<GeminiFile> {
+  const res = await fetch(`${BASE}/v1beta/${fileName}`, { headers: { 'x-goog-api-key': apiKey } });
+  const data = await res.json() as { uri?: string; videoMetadata?: { videoDuration?: string } };
+  return { uri: data.uri ?? fileUri, name: fileName, durationSec: parseDuration(data.videoMetadata?.videoDuration) };
 }
 
 async function pollUntilActive(apiKey: string, fileName: string, fileUri: string): Promise<GeminiFile> {
   let state = 'PROCESSING';
   let uri = fileUri;
+  let durationSec: number | undefined;
   for (let attempts = 0; state === 'PROCESSING' && attempts < 30; attempts++) {
     await new Promise((r) => setTimeout(r, 3000));
     const res = await fetch(`${BASE}/v1beta/${fileName}`, { headers: { 'x-goog-api-key': apiKey } });
-    const data = await res.json() as { state?: string; uri?: string };
+    const data = await res.json() as { state?: string; uri?: string; videoMetadata?: { videoDuration?: string } };
     state = data.state ?? state;
     uri = data.uri ?? uri;
+    durationSec = parseDuration(data.videoMetadata?.videoDuration) ?? durationSec;
   }
   if (state === 'FAILED') throw new Error('Video processing failed on Google servers.');
   if (state === 'PROCESSING') throw new Error('Video processing timed out on Google servers.');
-  return { uri, name: fileName };
+  return { uri, name: fileName, durationSec };
 }
 
 export async function deleteGeminiFile(apiKey: string, fileName: string): Promise<void> {

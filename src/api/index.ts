@@ -1,5 +1,5 @@
 import type {
-  AnalyzeResponse, FormatDna, FormatSummary, GenerationRun, ModelProfile, VariationStrength,
+  AnalyzeResponse, FormatDna, FormatSummary, GenerationRun, Job, ModelProfile, VariationStrength,
 } from '@shared/contract';
 import { ANALYZE_FIELDS } from '@shared/fields';
 import { apiFetch } from './client';
@@ -57,12 +57,13 @@ export function getProfile(id: string): Promise<ModelProfile> {
   return apiFetch(`/profiles/${id}`);
 }
 
+/** Character-neutral by default; pass profileId only to bind a model profile (optional layer). */
 export function generateIdeations(
-  formatId: string, profileId: string, variationStrength: VariationStrength,
+  formatId: string, variationStrength: VariationStrength, profileId?: string,
 ): Promise<GenerationRun> {
   return apiFetch('/generate', {
     method: 'POST',
-    json: { formatId, profileId, variationStrength },
+    json: { formatId, variationStrength, ...(profileId ? { profileId } : {}) },
     timeoutMs: 570_000,
   });
 }
@@ -75,4 +76,26 @@ export function listGenerations(formatId: string): Promise<{
 
 export function getGeneration(id: string): Promise<GenerationRun> {
   return apiFetch(`/generations/${id}`);
+}
+
+export function getJob(id: string): Promise<Job> {
+  return apiFetch(`/jobs/${id}`);
+}
+
+export function listVersions(id: string): Promise<{ formatId: string; versions: { version: number; created_at: string }[] }> {
+  return apiFetch(`/formats/${id}/versions`);
+}
+
+export function getVersion(id: string, version: number): Promise<{ formatId: string; version: number; dna: FormatDna; snapshotAt: string }> {
+  return apiFetch(`/formats/${id}/versions/${version}`);
+}
+
+/** Markdown brief (DNA + latest generations) — returns raw text for the clipboard. */
+export async function exportMarkdown(id: string): Promise<string> {
+  const { API_BASE, TOKEN_STORAGE_KEY } = await import('../config');
+  const res = await fetch(`${API_BASE}/formats/${id}/export?fmt=markdown`, {
+    headers: { 'X-API-Key': localStorage.getItem(TOKEN_STORAGE_KEY) ?? '' },
+  });
+  if (!res.ok) throw new Error(`export failed: HTTP ${res.status}`);
+  return res.text();
 }

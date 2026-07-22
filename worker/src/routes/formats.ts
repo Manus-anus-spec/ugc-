@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { FormatDnaSchema } from '../../../shared/schemas';
 import type { Env } from '../env';
 import { err, json, newId, nowIso } from '../http';
-import { SUMMARY_SELECT, formatInsertStatements, rowToSummary, tagStatements, type FormatRow } from '../db';
+import { SUMMARY_SELECT, formatInsertStatements, ftsSyncStatements, rowToSummary, tagStatements, type FormatRow } from '../db';
 
 /** POST/PUT body: the DNA plus optional tag list (tags default to dna.tags). */
 const UpsertBodySchema = z.object({
@@ -28,9 +28,11 @@ export async function listFormats(req: Request, env: Env): Promise<Response> {
   }
   const q = url.searchParams.get('q');
   if (q) {
-    clauses.push('(f.title LIKE ? OR f.archetype LIKE ?)');
-    const like = `%${q}%`;
-    binds.push(like, like);
+    // FTS5 across title/archetype/hook/why-it-works/tags; quoted terms so user
+    // input can't inject MATCH syntax. LIKE fallback handled by catch below.
+    const match = q.split(/\s+/).filter(Boolean).map((t) => `"${t.replaceAll('"', '')}"*`).join(' ');
+    clauses.push('f.id IN (SELECT id FROM formats_fts WHERE formats_fts MATCH ?)');
+    binds.push(match);
   }
 
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 200);
@@ -38,12 +40,19 @@ export async function listFormats(req: Request, env: Env): Promise<Response> {
 
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const sql = `${SUMMARY_SELECT} ${where} ORDER BY f.updated_at DESC LIMIT ? OFFSET ?`;
-  const { results } = await env.DB.prepare(sql).bind(...binds, limit, offset).all<FormatRow>();
-
-  const countSql = `SELECT COUNT(*) AS n FROM formats f ${where}`;
-  const count = await env.DB.prepare(countSql).bind(...binds).first<{ n: number }>();
-
-  return json({ total: count?.n ?? results.length, items: results.map(rowToSummary) }, 200, req, env);
+  try {
+    const { results } = await env.DB.prepare(sql).bind(...binds, limit, offset).all<FormatRow>();
+    const countSql = `SELECT COUNT(*) AS n FROM formats f ${where}`;
+    const count = await env.DB.prepare(countSql).bind(...binds).first<{ n: number }>();
+    return json({ total: count?.n ?? results.length, items: results.map(rowToSummary) }, 200, req, env);
+  } catch (e) {
+    // FTS unavailable (migration not applied) or MATCH edge case → LIKE fallback
+    if (!q) throw e;
+    const like = `%${q}%`;
+    const fallback = `${SUMMARY_SELECT} WHERE (f.title LIKE ? OR f.archetype LIKE ?) ORDER BY f.updated_at DESC LIMIT ? OFFSET ?`;
+    const { results } = await env.DB.prepare(fallback).bind(like, like, limit, offset).all<FormatRow>();
+    return json({ total: results.length, items: results.map(rowToSummary) }, 200, req, env);
+  }
 }
 
 export async function getFormat(req: Request, env: Env, id: string): Promise<Response> {
@@ -103,6 +112,7 @@ export async function updateFormat(req: Request, env: Env, id: string): Promise<
       nextVersion, JSON.stringify(stored), now, id,
     ),
     ...(tags ? tagStatements(env, id, tags) : []),
+    ...ftsSyncStatements(env, stored, tags ?? stored.tags),
   ]);
   return json({ id, version: nextVersion }, 200, req, env);
 }
@@ -110,7 +120,27 @@ export async function updateFormat(req: Request, env: Env, id: string): Promise<
 export async function deleteFormat(req: Request, env: Env, id: string): Promise<Response> {
   const result = await env.DB.prepare('DELETE FROM formats WHERE id = ?').bind(id).run();
   if (!result.meta.changes) return err('not_found', `format ${id} not found`, 404, req, env);
+  await env.DB.prepare('DELETE FROM formats_fts WHERE id = ?').bind(id).run().catch(() => {});
   return json({ deleted: id }, 200, req, env);
+}
+
+/** POST /admin/reindex-fts — rebuild the FTS table from all rows (backfill + repair). */
+export async function reindexFts(req: Request, env: Env): Promise<Response> {
+  const { results } = await env.DB.prepare(`${SUMMARY_SELECT}`).all<FormatRow>();
+  const statements: D1PreparedStatement[] = [env.DB.prepare('DELETE FROM formats_fts')];
+  for (const row of results) {
+    const tags = row.tags ? row.tags.split(',') : [];
+    if (row.schema_version === '0-legacy') {
+      statements.push(env.DB.prepare(
+        'INSERT INTO formats_fts (id, title, archetype, hook_text, why_it_works, tags) VALUES (?, ?, ?, ?, ?, ?)'
+      ).bind(row.id, row.title, row.archetype, '', '', tags.join(' ')));
+    } else {
+      const dna = JSON.parse(row.dna) as Parameters<typeof ftsSyncStatements>[1];
+      statements.push(ftsSyncStatements(env, dna, tags)[1]!);
+    }
+  }
+  await env.DB.batch(statements);
+  return json({ reindexed: results.length }, 200, req, env);
 }
 
 export async function listVersions(req: Request, env: Env, id: string): Promise<Response> {
