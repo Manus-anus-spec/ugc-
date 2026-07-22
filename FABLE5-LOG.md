@@ -47,3 +47,14 @@
 - package.json cleaned: name fixed, express/better-sqlite3/dotenv/@google/genai/motion/autoprefixer dropped (−205 packages). tsconfig strict + @shared alias. Old dead code gone with the monolith overwrite.
 - Typecheck clean · vite build clean (388KB) · verified in Chrome against the LIVE API: token gate validates via real call, library lists all 7 D1 formats (chips/badges/tags), Feral-Hinge detail renders full DnaReport (WhyItWorks card, KEEP/SWAP map, beats rail, camera block, frame specs w/ nsfw obs), legacy-markdown path in place.
 - 🔑 remaining for Phase 3 close: GitHub Pages deploy (Khian: commit + push, or tell me to). NEXT: Phase 4 profiles + ideation generation.
+
+## Pages deploy · 2026-07-22 ✅ LIVE
+- Source pushed (feat/production-brief-system 9d5db79), dist force-pushed to gh-pages. Live: https://manus-anus-spec.github.io/ugc-/ — token unlocks it.
+- Hygiene: stray root bundle + .bak + stale pnpm-lock deleted, .omc/ untracked, dist stays untracked. Q7: repo stays on Manus-anus-spec for now; MOVE TO ARUNA ORG BEFORE SHARING THE URL (it contains "anus").
+
+## Phase 4 — Profiles + ideation generation · 2026-07-22 ✅ LIVE end-to-end
+- Profiles seeded on live API: sav (every literal lifted from scanner IP: sheet ids, 12-step NB, SD templates, camera lines, sanitize map, voice), naomi (single-ref+base64, stub world), niko-default template. /generate REQUIRES profileId — no default identity exists.
+- Two-layer compiler: deterministic rules (Kling/CDance table, face-forward, banned-word/char-cap lint, identity-lock wrap, input sanitize — 20 offline tests green) around ONE creative Pro call; one schema repair + one lint rewrite, then typed hard-fail. Runs persist to D1 generations.
+- THREE REAL BUGS found+fixed in live testing: (1) Gemini's constrained decoder 400s on minItems/maxItems over large item schemas → geminiSafeSchema strips array bounds; (2) thinking models stream thought-parts that corrupted accumulated JSON → filtered; (3) client disconnect cancelled the worker mid-run and orphaned a paid call → waitUntil on /analyze + /generate, plus a run-history loader in the UI.
+- PROVEN: Feral Hinge × sav → 3 ideations (Room Service / Galley Break / Villa Feast) all in Sav's world w/ uniform block + voice; × naomi → Rooftop Burger / Hotel Ribs / Cafe Spaghetti, ZERO Sav-world tokens. The Naomi→Sav bug is dead. Money screen verified in Chrome on the production build; Phase 4 deployed to Pages (index-CwYSPTHW.js).
+- NEXT: Phase 5 — long-form two-pass + async jobs, /export/briefs (operator-Claude compat), FTS search, version-history UI, profile editor. Open inputs: Naomi/Niko real profile values (Q5), 2 more goldens incl. a mirror-selfie.
