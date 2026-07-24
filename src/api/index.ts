@@ -6,6 +6,7 @@ import { apiFetch } from './client';
 
 export interface LibraryQuery {
   archetype?: string;
+  formatType?: string;
   tag?: string;
   rating?: string;
   platform?: string;
@@ -55,6 +56,15 @@ export function listProfiles(): Promise<{ items: { id: string; name: string; ver
 
 export function getProfile(id: string): Promise<ModelProfile> {
   return apiFetch(`/profiles/${id}`);
+}
+
+/** Upsert — PUT creates or updates; the server bumps the version on every write. */
+export function putProfile(profile: ModelProfile): Promise<{ id: string; version: number }> {
+  return apiFetch(`/profiles/${profile.id}`, { method: 'PUT', json: profile });
+}
+
+export function deleteProfile(id: string): Promise<{ deleted: string }> {
+  return apiFetch(`/profiles/${id}`, { method: 'DELETE' });
 }
 
 /** Character-neutral by default; pass profileId only to bind a model profile (optional layer). */

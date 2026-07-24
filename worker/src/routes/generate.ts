@@ -5,7 +5,7 @@
  * back to, which is what killed the old Naomi→Sav bug.
  */
 import { z } from 'zod';
-import { GenerationRunSchema, IdeationSchema, ModelProfileSchema, VariationStrengthSchema } from '../../../shared/schemas';
+import { GenerationRunSchema, IdeationSchema, ModelProfileSchema, VariationStrengthSchema, ViralityForecastSchema } from '../../../shared/schemas';
 import type { FormatDna, GenerationRun, ModelProfile } from '../../../shared/contract';
 import { API_VERSION, type Env } from '../env';
 import { err, json, newId, nowIso } from '../http';
@@ -30,7 +30,8 @@ const RequestSchema = z.object({
  *  item schemas (see geminiSafeSchema); the count is enforced below instead. */
 const LlmOutputSchema = z.object({
   formulaExtracted: z.string(),
-  ideations: z.array(IdeationSchema),
+  // virality forecast is REQUIRED on new runs (optional in the stored IdeationSchema only for old rows)
+  ideations: z.array(IdeationSchema.extend({ virality: ViralityForecastSchema })),
 });
 const LLM_JSON_SCHEMA = z.toJSONSchema(LlmOutputSchema) as Record<string, unknown>;
 

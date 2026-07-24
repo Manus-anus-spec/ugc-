@@ -3,25 +3,31 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowLeft, Check, Clock, FileDown, Film, History, Loader2, Search, Sparkles, Trash2 } from 'lucide-react';
 import type { FormatDna, FormatSummary } from '@shared/contract';
+import { FormatTypeSchema } from '@shared/schemas';
 import { exportMarkdown, getFormat, getVersion, listVersions, type FormatDetail } from '../../api';
 import { useLibrary } from '../../hooks/useLibrary';
 import { DnaReport } from '../analyze/DnaReport';
-import { ArchetypeChip, CopyButton, RatingBadge } from '../ui';
+import { ArchetypeChip, CopyButton, FormatTypeChip, RatingBadge, ViralityBadge } from '../ui';
 
 const RATINGS = ['sfw', 'borderline', 'nsfw'] as const;
+const FORMAT_TYPES = FormatTypeSchema.options;
 
 function FormatCard({ f, onOpen }: { f: FormatSummary; onOpen: () => void }) {
   return (
     <button
       onClick={onOpen}
-      className="text-left bg-surface border border-hairline rounded-lg p-4 space-y-2
-                 hover:border-pitch transition-colors cursor-pointer"
+      className="text-left bg-surface border border-hairline rounded-lg p-4 space-y-2 card-lift
+                 hover:border-pitch cursor-pointer animate-rise"
     >
       <div className="flex items-start justify-between gap-2">
         <h3 className="text-sm font-semibold leading-tight">{f.title}</h3>
-        <RatingBadge rating={f.contentRating} />
+        <div className="flex items-center gap-1.5 shrink-0">
+          <ViralityBadge score={f.viralityScore} />
+          <RatingBadge rating={f.contentRating} />
+        </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        <FormatTypeChip formatType={f.formatType} />
         <ArchetypeChip archetype={f.archetype} />
         {f.schemaVersion === '0-legacy' && (
           <span className="text-[10px] font-mono uppercase text-borderline border border-borderline/40 rounded px-1.5 py-0.5">legacy</span>
@@ -208,6 +214,22 @@ export function LibraryView({ onGenerate }: { onGenerate: (formatId: string) => 
           </button>
         ))}
         <span className="text-[11px] font-mono text-dim ml-auto">{total} formats</span>
+      </div>
+
+      {/* Format-type taxonomy — the "what can we remake" axis */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {FORMAT_TYPES.map((ft) => (
+          <button
+            key={ft}
+            onClick={() => setQuery({ ...query, formatType: query.formatType === ft ? undefined : ft, offset: 0 })}
+            className={`px-2 py-0.5 rounded-full border text-[11px] transition-colors cursor-pointer
+              ${query.formatType === ft
+                ? 'border-electric text-electric bg-electric/10'
+                : 'border-hairline text-dim hover:text-cream hover:border-pitch'}`}
+          >
+            {ft.replaceAll('_', ' ')}
+          </button>
+        ))}
       </div>
 
       {error && <p className="text-nsfw text-sm font-mono">{error}</p>}

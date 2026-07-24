@@ -10,11 +10,13 @@ import {
   ApiErrorSchema,
   BeatGenerationSchema,
   BeatSchema,
+  CameraDynamicsSchema,
   CameraSetupKindSchema,
   CameraSetupSchema,
   ContentRatingSchema,
   FormatDnaSchema,
   FormatSummarySchema,
+  FormatTypeSchema,
   FrameSpecSchema,
   GenerationRunSchema,
   GenerationStatusSchema,
@@ -28,6 +30,8 @@ import {
   VariationStrengthSchema,
   VideoFormatSchema,
   VideoModelChoiceSchema,
+  ViralityForecastSchema,
+  ViralityScorecardSchema,
 } from './schemas';
 
 export type Platform = z.infer<typeof PlatformSchema>;
@@ -38,6 +42,11 @@ export type VariationStrength = z.infer<typeof VariationStrengthSchema>;
 export type GenerationStatus = z.infer<typeof GenerationStatusSchema>;
 export type SdFrameType = z.infer<typeof SdFrameTypeSchema>;
 export type CameraSetupKind = z.infer<typeof CameraSetupKindSchema>;
+
+export type FormatType = z.infer<typeof FormatTypeSchema>;
+export type CameraDynamics = z.infer<typeof CameraDynamicsSchema>;
+export type ViralityScorecard = z.infer<typeof ViralityScorecardSchema>;
+export type ViralityForecast = z.infer<typeof ViralityForecastSchema>;
 
 export type SourceMeta = z.infer<typeof SourceMetaSchema>;
 export type CameraSetup = z.infer<typeof CameraSetupSchema>;

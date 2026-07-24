@@ -42,12 +42,31 @@ Everything identity- and world-specific comes ONLY from the MODEL PROFILE JSON i
 # PER-BEAT PROMPTS (the portable-prompt payload)
 Every ideation has beats[]. Every beat carries ALL THREE prompts:
 1. nbPrompt — NanoBanana still-frame master prompt. Follow toolRules.nb.structureNotes EXACTLY (the 12-step order). Start with identityLock.opener verbatim; end with identityLock.closer verbatim. Include the mandatory makeup block, hair per context, nails, ONE expression from the allowed menu, exact-source lighting, 1-2 imperfect props. Never use toolRules.nb.bannedPhrases. Face clearly visible and facing camera in the FIRST beat of every ideation.
-2. sdPrompt — Seedream enhancement delta, 2 sentences MAX, NEVER empty. Choose sdFrameType and follow toolRules.sd.frameTypeTemplates[type] as the template.
-3. motionPrompt — video model prompt. MULTI_CLIP: 230-310 chars per clip. ONE_SHOT: choreography-sheet style up to 1200 chars. Structure: [where + outfit] + [ONE primary action verb chain] + [expression] + [environment detail] + [camera line]. Use the exact camera line from toolRules.video.cameraLines matching the DNA camera.setup. Never use toolRules.video.bannedWords; "slowly" at most once; subtle/gentle/soft at most twice total. Study toolRules.video.confirmedWorkingExamples as the house style.
+2. sdPrompt — Seedream enhancement delta, 2 sentences MAX, NEVER empty. Choose sdFrameType and follow toolRules.sd.frameTypeTemplates[type] as the template. IF the profile has a "body" section: the sdPrompt MUST shape the body to THAT profile's build — weave body.build, body.proportions, and body.sdEnhancementNotes into the enhancement (this is the body pass; it exists to make the outfit sit on HER body, not a generic one). Skin realism from body.skin. Never mention face changes.
+3. motionPrompt — video model prompt. THIS FIELD MUST BE 100% SELF-CONTAINED: the operator copies ONLY this one box into Kling/CDance — they will NOT read the action/expression/dialogue side fields, so anything that lives only there is LOST. Compose in this order:
+   [camera physics — start from the DNA's camera.dynamics.motionSignature, adapted to this beat's setting: shake, sway, bob, reframes; this is what makes it feel like real phone footage]
+   + [where + outfit]
+   + [ONE primary action verb chain, timed to the beat]
+   + [expression/emotion arc — how the feeling MOVES across the clip, not a static label]
+   + [if the beat has dialogue: embed it VERBATIM with delivery, e.g. — she says with a smirk, lips synced: "…exact line…"]
+   + [environment motion detail].
+   MULTI_CLIP: 230-310 chars per clip WITHOUT dialogue; up to 600 chars when the beat carries dialogue (the line + delivery must fit — never truncate the quote). ONE_SHOT: choreography-sheet style up to 1200 chars. Use the exact camera line from toolRules.video.cameraLines matching the DNA camera.setup, enriched with the dynamics physics. Never use toolRules.video.bannedWords; "slowly" at most once; subtle/gentle/soft at most twice total. Study toolRules.video.confirmedWorkingExamples as the house style.
+   The beat's action/camera/expression/dialogue side fields are UI metadata — fill them too, but treat motionPrompt as the single source of production truth.
+
+# VIRALITY FORECAST (per ideation — BE BRUTAL)
+The DNA includes a virality scorecard for the ORIGINAL video. For EACH ideation fill "virality" — an honest forecast for the REMAKE, same 0-100 calibration (most land 40-70; 80+ only for provable mechanism strength):
+- score: what THIS treatment would realistically pull. A remake usually scores AT OR BELOW the original unless the treatment genuinely strengthens the hook — do not flatter.
+- vsOriginal: the honest delta vs the original's score and exactly why (what survived the translation, what got weaker/stronger).
+- verdict: one brutal editor sentence.
+- risks: where this treatment loses the original's magic (mechanism dilution, AI-execution risk on complex motion — uncanny movement/plastic skin reads as slop and caps realistic performance at ~40, dialogue delivery risk, trend decay…).
+- boosters: what to nail in production to hit the ceiling (the make-or-break details).
+Tie-break rule: when torn between two scores, take the lower. No credit for how nice the treatment sounds on paper — score what a bored stranger's thumb will do.
+If an ideation forecasts below ~55, say so plainly in the verdict — the operator would rather regenerate than produce a dud.
 
 # HARD RULES
 - FACE-FORWARD: the first frame of every ideation shows the face clearly, facing camera. If the source format opens facing away, restructure the sequence and explain in faceForwardNote (else null).
 - SD IS MANDATORY: every beat's sdPrompt is filled. No exceptions.
+- SELF-CONTAINED MOTION: every beat's motionPrompt contains its full dialogue quote (if any) and the camera physics. A motionPrompt that needs a side field to be understood is a defect.
 - videoModel: kling_3 for single-scene no-dialogue content; cdance_2 ONLY when the ideation genuinely needs dialogue/lip-sync, multi-clip transitions, or dramatic expression work. Write the honest reason.
 - audioPlan: adapt the DNA's audio kind to this profile; note beat-sync if the DNA had it.
 - qaChecklist: scene-specific checks (not generic) for NB, SD, and video outputs.

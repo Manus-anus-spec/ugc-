@@ -2,8 +2,63 @@
  * Typed FormatDNA renderer — replaces the old markdown wall. Every field it shows
  * came through the schema; nothing here parses text.
  */
-import type { Beat, FormatDna, FrameSpec } from '@shared/contract';
-import { ArchetypeChip, CopyButton, DifficultyDots, KV, RatingBadge, Section } from '../ui';
+import type { Beat, FormatDna, FrameSpec, ViralityScorecard } from '@shared/contract';
+import { ArchetypeChip, CopyButton, DifficultyDots, FormatTypeChip, KV, RatingBadge, ScoreBar, ScoreRing, Section, scoreTier } from '../ui';
+
+/** The brutal scorecard — big honest number, dimension bars, and every weakness named. */
+function ViralityCard({ v }: { v: ViralityScorecard }) {
+  return (
+    <section className="bg-surface border border-hairline rounded-lg p-5 animate-rise">
+      <h3 className="text-xs font-mono uppercase tracking-widest text-dim mb-4">Virality — brutally honest</h3>
+      <div className="flex flex-col sm:flex-row gap-5">
+        <div className="flex sm:flex-col items-center gap-3 sm:gap-1 shrink-0">
+          <ScoreRing score={v.overall} />
+          <span className="font-mono text-[10px] uppercase tracking-wider text-dim text-center">{scoreTier(v.overall)}</span>
+        </div>
+        <div className="flex-1 min-w-0 space-y-3">
+          <p className="text-base leading-snug font-medium">“{v.verdict}”</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5">
+            <ScoreBar label="hook" score={v.dimensions.hook.score} />
+            <ScoreBar label="retention" score={v.dimensions.retention.score} />
+            <ScoreBar label="emotion" score={v.dimensions.emotion.score} />
+            <ScoreBar label="share" score={v.dimensions.share.score} />
+            <ScoreBar label="replay" score={v.dimensions.replay.score} />
+            <ScoreBar label="algo" score={v.dimensions.algo.score} />
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+        <div className="border-l-2 border-sfw/60 pl-3 space-y-1">
+          <p className="font-mono text-[10px] uppercase tracking-wider text-sfw">carries it</p>
+          {v.strengths.map((s, i) => <p key={i} className="text-sm text-cream/85">{s}</p>)}
+        </div>
+        <div className="border-l-2 border-nsfw/60 pl-3 space-y-1">
+          <p className="font-mono text-[10px] uppercase tracking-wider text-nsfw">drags it down</p>
+          {v.weaknesses.map((w, i) => <p key={i} className="text-sm text-cream/85">{w}</p>)}
+        </div>
+      </div>
+      <div className="mt-4 space-y-1.5">
+        <KV k="ceiling" v={v.ceiling} />
+        {v.improvements.length > 0 && (
+          <div className="flex gap-3 text-sm py-1">
+            <span className="font-mono text-[11px] uppercase tracking-wider text-dim w-32 shrink-0 pt-0.5">to raise it</span>
+            <div className="space-y-1">
+              {v.improvements.map((imp, i) => <p key={i} className="text-cream/90">→ {imp}</p>)}
+            </div>
+          </div>
+        )}
+      </div>
+      <details className="mt-3">
+        <summary className="font-mono text-[10px] uppercase tracking-wider text-dim cursor-pointer">why each number</summary>
+        <div className="mt-2 space-y-1">
+          {(Object.entries(v.dimensions) as [string, { score: number; reason: string }][]).map(([k, d]) => (
+            <KV key={k} k={k} v={d.reason} />
+          ))}
+        </div>
+      </details>
+    </section>
+  );
+}
 
 function BeatCard({ beat }: { beat: Beat }) {
   return (
@@ -60,6 +115,7 @@ export function DnaReport({ dna }: { dna: FormatDna }) {
       {/* Header */}
       <header className="flex flex-wrap items-center gap-3">
         <h2 className="text-xl font-semibold tracking-tight">{dna.title}</h2>
+        <FormatTypeChip formatType={dna.formatType} />
         <ArchetypeChip archetype={dna.archetype} />
         <RatingBadge rating={dna.contentFlag.rating} />
         <span className="font-mono text-[11px] text-dim">
@@ -74,6 +130,9 @@ export function DnaReport({ dna }: { dna: FormatDna }) {
           <span key={t} className="text-[11px] font-mono text-dim bg-surface border border-hairline rounded px-1.5 py-0.5">#{t}</span>
         ))}
       </div>
+
+      {/* The brutal scorecard — first thing after the header */}
+      {dna.virality && <ViralityCard v={dna.virality} />}
 
       {/* The teaching layer — first-class */}
       <section className="bg-surface border border-orange/30 rounded-lg p-5">
@@ -125,6 +184,23 @@ export function DnaReport({ dna }: { dna: FormatDna }) {
         <KV k="phone / hidden arm" v={`${dna.camera.phoneVisible} · ${dna.camera.hiddenArm}`} />
         {dna.camera.placementNote && <KV k="placement" v={dna.camera.placementNote} />}
         {dna.camera.transitions && <KV k="transitions" v={dna.camera.transitions} />}
+        {dna.camera.dynamics && (
+          <div className="mt-3 bg-raised border border-hairline rounded-lg p-3 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <p className="font-mono text-[10px] uppercase tracking-wider text-electric">camera physics — the real-footage feel</p>
+              <CopyButton text={dna.camera.dynamics.motionSignature} label="copy signature" />
+            </div>
+            <p className="text-sm font-medium">{dna.camera.dynamics.motionSignature}</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+              <KV k="stability" v={<span className="font-mono">{dna.camera.dynamics.stability}</span>} />
+              <KV k="shake" v={dna.camera.dynamics.shake} />
+              <KV k="sway" v={dna.camera.dynamics.sway} />
+              <KV k="bob" v={dna.camera.dynamics.bob} />
+              <KV k="reframes" v={dna.camera.dynamics.reframes} />
+              <KV k="focus/exposure" v={dna.camera.dynamics.focusExposure} />
+            </div>
+          </div>
+        )}
       </Section>
 
       {/* Frames */}

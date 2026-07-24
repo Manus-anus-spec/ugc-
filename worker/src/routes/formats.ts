@@ -17,6 +17,8 @@ export async function listFormats(req: Request, env: Env): Promise<Response> {
 
   const archetype = url.searchParams.get('archetype');
   if (archetype) { clauses.push('f.archetype = ?'); binds.push(archetype); }
+  const formatType = url.searchParams.get('formatType');
+  if (formatType) { clauses.push('f.format_type = ?'); binds.push(formatType); }
   const rating = url.searchParams.get('rating');
   if (rating) { clauses.push('f.content_rating = ?'); binds.push(rating); }
   const platform = url.searchParams.get('platform');
@@ -102,11 +104,13 @@ export async function updateFormat(req: Request, env: Env, id: string): Promise<
       'INSERT OR REPLACE INTO format_versions (format_id, version, dna, created_at) VALUES (?, ?, ?, ?)'
     ).bind(id, existing.current_version, existing.dna, now),
     env.DB.prepare(
-      `UPDATE formats SET title = ?, archetype = ?, hook_type = ?, content_rating = ?,
-         duration_sec = ?, clip_count = ?, platform = ?, source_url = ?, thumbnail_url = ?,
+      `UPDATE formats SET title = ?, archetype = ?, format_type = ?, virality_score = ?, hook_type = ?,
+         content_rating = ?, duration_sec = ?, clip_count = ?, platform = ?, source_url = ?, thumbnail_url = ?,
          current_version = ?, dna = ?, updated_at = ? WHERE id = ?`
     ).bind(
-      stored.title, stored.archetype, stored.hook.type, stored.contentFlag.rating,
+      stored.title, stored.archetype, stored.formatType ?? null,
+      stored.virality ? Math.round(stored.virality.overall) : null,
+      stored.hook.type, stored.contentFlag.rating,
       stored.source.durationSec, stored.source.clipCount, stored.source.platform,
       stored.source.url ?? null, stored.source.thumbnailUrl ?? null,
       nextVersion, JSON.stringify(stored), now, id,

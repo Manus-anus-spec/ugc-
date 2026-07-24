@@ -33,11 +33,19 @@ export interface LintViolation { beatIndex: number; field: string; problem: stri
 
 const SOFT_WORDS = ['subtle', 'gentle', 'soft'];
 export const MOTION_CHAR_CAP_MULTI = 310;
+export const MOTION_CHAR_CAP_MULTI_DIALOGUE = 600;   // the verbatim quote + delivery must fit — never truncate dialogue
 export const MOTION_CHAR_CAP_ONE_SHOT = 1200;
 
-/** Motion-prompt lint (ports scanner:1916-1922): banned words, slowly×1, soft-words×2, char caps. */
+export function motionCharCap(videoFormat: 'ONE_SHOT' | 'MULTI_CLIP', hasDialogue: boolean): number {
+  if (videoFormat === 'ONE_SHOT') return MOTION_CHAR_CAP_ONE_SHOT;
+  return hasDialogue ? MOTION_CHAR_CAP_MULTI_DIALOGUE : MOTION_CHAR_CAP_MULTI;
+}
+
+/** Motion-prompt lint (ports scanner:1916-1922): banned words, slowly×1, soft-words×2, char caps,
+ *  plus the SELF-CONTAINED rule — a beat's dialogue must appear verbatim inside the motionPrompt. */
 export function lintMotionPrompt(
   prompt: string, profile: ModelProfile, videoFormat: 'ONE_SHOT' | 'MULTI_CLIP', beatIndex: number,
+  dialogue?: string,
 ): LintViolation[] {
   const v: LintViolation[] = [];
   const lower = prompt.toLowerCase();
@@ -50,10 +58,30 @@ export function lintMotionPrompt(
   if (slowly > 1) v.push({ beatIndex, field: 'motionPrompt', problem: `"slowly" ×${slowly} (max 1 — causes slow motion)` });
   const soft = SOFT_WORDS.reduce((n, w) => n + (lower.match(new RegExp(`\\b${w}\\b`, 'g')) ?? []).length, 0);
   if (soft > 2) v.push({ beatIndex, field: 'motionPrompt', problem: `subtle/gentle/soft ×${soft} (max 2 — kills energy)` });
-  const cap = videoFormat === 'MULTI_CLIP' ? MOTION_CHAR_CAP_MULTI : MOTION_CHAR_CAP_ONE_SHOT;
+  const hasDialogue = !!dialogue?.trim();
+  const cap = motionCharCap(videoFormat, hasDialogue);
   if (prompt.length > cap) v.push({ beatIndex, field: 'motionPrompt', problem: `${prompt.length} chars > ${cap} cap` });
   if (/\b\d{2}[- ]year[- ]old\b/.test(lower)) v.push({ beatIndex, field: 'motionPrompt', problem: 'age reference' });
+  if (hasDialogue && !normalize(prompt).includes(normalize(dialogue!))) {
+    v.push({ beatIndex, field: 'motionPrompt', problem: 'beat dialogue is missing from motionPrompt — it must be embedded verbatim (self-contained rule)' });
+  }
   return v;
+}
+
+/** Loose-but-safe text normalization for the dialogue-containment check (quotes/whitespace/case drift). */
+function normalize(s: string): string {
+  return s.toLowerCase().replace(/[“”"'’‘…]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/** Guarantee the profile body pass structurally: if the profile carries a body section and the
+ *  LLM's sdPrompt ignored it, append the enhancement notes — the body wrap must never be skipped. */
+export function applyBodyWrap(sdPrompt: string, profile: ModelProfile): string {
+  const body = profile.body;
+  if (!body) return sdPrompt;
+  const mentionsBody = normalize(sdPrompt).includes(normalize(body.sdEnhancementNotes).slice(0, 40))
+    || normalize(sdPrompt).includes(normalize(body.build).slice(0, 25));
+  if (mentionsBody) return sdPrompt;
+  return `${sdPrompt.trim()} Shape the body to this profile: ${body.build}; ${body.proportions}. ${body.sdEnhancementNotes} Skin: ${body.skin}. Keep the face exactly.`;
 }
 
 /** NB identity-leak lint: profile descriptors + banned phrases must never appear.
@@ -77,6 +105,23 @@ export function lintNbPrompt(prompt: string, profile: ModelProfile, beatIndex: n
     }
   }
   return v;
+}
+
+/** Deterministic auto-neutralize for universal slop lighting/camera terms the LLM keeps
+ *  reaching for. These are always wrong for our candid-iPhone aesthetic and have safe
+ *  clean replacements, so we FIX them rather than hard-fail the whole run. Identity
+ *  descriptors and instruction-type banned phrases are NOT auto-fixed — those still lint. */
+const NB_SLOP_AUTOFIX: [RegExp, string][] = [
+  [/\bstudio lighting\b/gi, 'soft natural lighting'],
+  [/\bring light\b/gi, 'natural window light'],
+  [/\bcinematic\b/gi, 'candid'],
+  [/\bbokeh\b/gi, 'natural depth of field'],
+  [/\bDSLR\b/gi, 'iPhone'],
+];
+export function autofixNbSlop(nbPrompt: string): string {
+  let p = nbPrompt;
+  for (const [re, rep] of NB_SLOP_AUTOFIX) p = p.replace(re, rep);
+  return p;
 }
 
 /** Guarantee the identity lock structurally: opener first, closer last (never trust the LLM). */
@@ -110,12 +155,14 @@ export function enforceIdeation(ideation: Ideation, profile: ModelProfile): Lint
     ideation.videoModel = ruled;   // rule engine wins; auditable reason
   }
   for (const beat of ideation.beats) {
+    beat.nbPrompt = autofixNbSlop(beat.nbPrompt);
     beat.nbPrompt = wrapIdentityLock(beat.nbPrompt, profile);
+    beat.sdPrompt = applyBodyWrap(beat.sdPrompt, profile);
     beat.motionPromptCharCount = beat.motionPrompt.length;
     if (!beat.sdPrompt.trim()) {
       violations.push({ beatIndex: beat.clipIndex, field: 'sdPrompt', problem: 'empty — SD pass is mandatory, never skip' });
     }
-    violations.push(...lintMotionPrompt(beat.motionPrompt, profile, ideation.videoFormat, beat.clipIndex));
+    violations.push(...lintMotionPrompt(beat.motionPrompt, profile, ideation.videoFormat, beat.clipIndex, beat.dialogue));
     violations.push(...lintNbPrompt(beat.nbPrompt, profile, beat.clipIndex));
   }
   ideation.status = 'draft';

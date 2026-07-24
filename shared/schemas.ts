@@ -27,6 +27,13 @@ export const SdFrameTypeSchema = z.enum([
   'FULL_FRONT', 'FULL_SIDE', 'BACK', 'UPPER_BODY', 'HEAD_SHOULDERS', 'UNIFORM', 'CONFINED',
 ]);
 
+/** Canonical format taxonomy — the filterable library axis (free-form archetype stays as flavor). */
+export const FormatTypeSchema = z.enum([
+  'talking_head', 'skit', 'pov', 'grwm', 'transformation', 'outfit_showcase',
+  'walk_and_talk', 'mirror_selfie', 'text_monologue', 'vlog_moment', 'reaction',
+  'tutorial', 'lifestyle_montage', 'thirst_trap', 'other',
+]);
+
 // ─────────────────────────────────────────────────────────────
 // Source meta
 // ─────────────────────────────────────────────────────────────
@@ -49,6 +56,21 @@ export const CameraSetupKindSchema = z.enum([
   'self_held_selfie', 'mirror_selfie', 'propped_on_surface', 'third_person', 'camera_put_down',
 ]);
 
+/**
+ * The handheld PHYSICS of the shot — what makes phone footage feel real.
+ * Extracted from pixels so a video model can reproduce the exact camera feel,
+ * not just the setup. motionSignature is the paste-ready distillation.
+ */
+export const CameraDynamicsSchema = z.object({
+  stability: z.enum(['locked_off', 'held_steady', 'natural_handheld', 'energetic_handheld', 'walking', 'running']),
+  shake: z.string(),                // amplitude + rhythm in physical terms: "constant 1-2px micro-jitter, faster during gestures"
+  sway: z.string(),                 // slow drift/lateral sway: "gentle side-to-side sway ~1s cycle" | "none"
+  bob: z.string(),                  // vertical bob from walking/breathing: "step-synced bob while walking" | "none"
+  reframes: z.string(),             // deliberate recomposes: "one downward reframe at 0:04 to follow the plate" | "none"
+  focusExposure: z.string(),        // autofocus hunts, exposure adaptation: "brief focus hunt at 0:02, exposure dips when window enters"
+  motionSignature: z.string(),      // ONE compiled sentence, video-prompt-ready, that reproduces this exact camera feel
+});
+
 export const CameraSetupSchema = z.object({
   setup: CameraSetupKindSchema,
   facing: z.enum(['front', 'rear']),
@@ -59,6 +81,41 @@ export const CameraSetupSchema = z.object({
   hiddenArm: z.enum(['left', 'right', 'none']),
   placementNote: z.string().optional(),   // "inside open fridge looking up"
   transitions: z.string().optional(),     // cut style between clips
+  dynamics: CameraDynamicsSchema.optional(),  // optional so pre-v2 rows keep parsing; analyzer MUST fill it
+});
+
+// ─────────────────────────────────────────────────────────────
+// VIRALITY — the brutally honest scorecard. Calibrated 0-100, never inflated.
+// ─────────────────────────────────────────────────────────────
+export const ViralityDimensionSchema = z.object({
+  score: z.number(),                // 0-100 on the calibrated rubric
+  reason: z.string(),               // brutal, pixel-specific justification — never generic praise
+});
+
+export const ViralityScorecardSchema = z.object({
+  overall: z.number(),              // 0-100; 50 = average posted video, 80+ = genuine viral mechanics
+  verdict: z.string(),              // ONE brutal sentence — what a no-bullshit editor would say
+  dimensions: z.object({
+    hook: ViralityDimensionSchema,        // 0-3s scroll-stop power
+    retention: ViralityDimensionSchema,   // watch-through: pacing, open loops, payoff placement
+    emotion: ViralityDimensionSchema,     // emotional charge: desire, humor, envy, relatability
+    share: ViralityDimensionSchema,       // share/comment/tag triggers
+    replay: ViralityDimensionSchema,      // loopability + rewatch pull
+    algo: ViralityDimensionSchema,        // platform fit: length, format, sound strategy, trend surf
+  }),
+  strengths: z.array(z.string()),   // what genuinely carries this video
+  weaknesses: z.array(z.string()),  // brutal — every drag on performance, named
+  ceiling: z.string(),              // realistic view-band forecast + the ONE thing capping it
+  improvements: z.array(z.string()),// concrete changes that would raise the overall score
+});
+
+/** Per-ideation honest forecast — how the REMAKE will do, not the original. */
+export const ViralityForecastSchema = z.object({
+  score: z.number(),                // 0-100, same calibration as the scorecard
+  vsOriginal: z.string(),           // honest delta vs the source video's score and why
+  verdict: z.string(),              // one brutal sentence
+  risks: z.array(z.string()),       // where this treatment can lose the original's magic
+  boosters: z.array(z.string()),    // what to nail in production to hit the ceiling
 });
 
 export const HookSchema = z.object({
@@ -118,9 +175,8 @@ export const FormatDnaSchema = z.object({
   id: z.string(),
   version: z.number().int(),
   title: z.string(),                // human name, e.g. "Elevator outfit-check freeze"
-  archetype: z.string(),            // 'grwm_voiceover' | 'pov_walk_and_talk' |
-                                    // 'transformation_reveal' | 'text_monologue' |
-                                    // 'talking_head' | 'skit' | 'outfit_showcase' | free-form
+  archetype: z.string(),            // free-form flavor label ("bait_and_switch")
+  formatType: FormatTypeSchema.optional(),  // canonical taxonomy axis — analyzer MUST fill; optional for pre-v2 rows
   tags: z.array(z.string()),
   hook: HookSchema,
   beats: z.array(BeatSchema),       // beat-by-beat shot list w/ timestamps
@@ -196,6 +252,7 @@ export const FormatDnaSchema = z.object({
     rating: ContentRatingSchema,
     triggers: z.array(z.string()),
   }),
+  virality: ViralityScorecardSchema.optional(),  // analyzer MUST fill; optional for pre-v2 rows
   frames: z.array(FrameSpecSchema), // identity-free frame specs (4-frame rule for one-shots,
                                     // 3/1 per clip for multi-clip — port of worker §13)
   source: SourceMetaSchema,
@@ -215,6 +272,11 @@ export const FormatDnaSchema = z.object({
  */
 export const AnalyzerOutputSchema = FormatDnaSchema.omit({
   schemaVersion: true, id: true, version: true, source: true,
+}).extend({
+  // Required for NEW analyses (optional in the stored schema only so pre-v2 rows keep parsing):
+  formatType: FormatTypeSchema,
+  virality: ViralityScorecardSchema,
+  camera: CameraSetupSchema.extend({ dynamics: CameraDynamicsSchema }),
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -242,10 +304,23 @@ export const ModelProfileSchema = z.object({
     wardrobeDefaults: z.record(z.string(), z.string()),  // role → concrete outfit description
     workContextRatio: z.string().optional(),   // "20-30% uniform / 70-80% off-duty"
   }),
+  /**
+   * The model's PHYSICAL BUILD — feeds the Seedream body pass ONLY (never NB/motion
+   * prompts; the identity firewall still owns the face). Optional: profiles without
+   * it fall back to the neutral SD templates.
+   */
+  body: z.object({
+    build: z.string(),              // "fit hourglass, natural bust, toned waist"
+    proportions: z.string(),        // bust/waist/hip balance, shoulder line, leg length
+    skin: z.string(),               // texture + tone behavior ("natural texture, visible pores, soft tan lines")
+    heightVibe: z.string().optional(),      // "reads ~5'6, long-legged"
+    sdEnhancementNotes: z.string(), // exactly how the Seedream pass should shape the body
+  }).optional(),
   world: z.object({
     locationWhitelist: z.array(z.string()),
     locationBanlist: z.array(z.string()),
     persona: z.string(),            // "young woman who works as a flight attendant"
+    backstory: z.string().optional(),       // her story/lore — grounds ideation in who she is
     audienceICP: z.string(),        // "men 35-50+, American, financially stable"
   }),
   voice: z.object({
@@ -335,6 +410,7 @@ export const IdeationSchema = z.object({
     sdChecks: z.array(z.string()),
     videoChecks: z.array(z.string()),
   }),
+  virality: ViralityForecastSchema.optional(),  // required for new runs (generator schema); optional for old rows
   status: GenerationStatusSchema,
 });
 
@@ -382,6 +458,8 @@ export const FormatSummarySchema = z.object({
   id: z.string(),
   title: z.string(),
   archetype: z.string(),
+  formatType: FormatTypeSchema.nullable(),
+  viralityScore: z.number().nullable(),
   hookType: z.string().nullable(),
   contentRating: ContentRatingSchema.nullable(),
   durationSec: z.number().nullable(),

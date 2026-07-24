@@ -1,13 +1,15 @@
 /**
  * The money screen (design-direction.md): format × profile × strength →
  * 3 ideation cards side by side → pick the winner → beat-by-beat portable prompts.
+ * Character-neutral by default; pick a profile to produce FOR that model — her
+ * world, her body (Seedream pass), her voice.
  */
 import { useEffect, useState } from 'react';
-import { Loader2, RotateCcw, Sparkles, XCircle } from 'lucide-react';
+import { Loader2, RotateCcw, Sparkles, User, XCircle } from 'lucide-react';
 import type { FormatSummary, GenerationRun, Ideation, VariationStrength } from '@shared/contract';
-import { generateIdeations, getGeneration, listFormats, listGenerations } from '../../api';
+import { generateIdeations, getGeneration, listFormats, listGenerations, listProfiles } from '../../api';
 import { ApiRequestError } from '../../api/client';
-import { ArchetypeChip, CopyButton, KV, Section } from '../ui';
+import { ArchetypeChip, CopyButton, KV, ScoreRing, Section, ViralityBadge, scoreTier } from '../ui';
 import { BeatPromptCard } from './BeatPromptCard';
 
 const STRENGTHS: { id: VariationStrength; label: string; hint: string }[] = [
@@ -20,15 +22,19 @@ function IdeationCard({ ideation, active, onPick }: { ideation: Ideation; active
   return (
     <button
       onClick={onPick}
-      className={`text-left flex-1 min-w-56 bg-surface border rounded-lg p-4 space-y-2 transition-colors cursor-pointer
+      className={`text-left flex-1 min-w-56 bg-surface border rounded-lg p-4 space-y-2 card-lift cursor-pointer animate-rise
         ${active ? 'border-orange' : 'border-hairline hover:border-pitch'}`}
     >
       <div className="flex items-center justify-between">
         <span className={`font-mono text-[10px] uppercase ${active ? 'text-orange' : 'text-dim'}`}>ideation {ideation.index + 1}</span>
-        <span className="font-mono text-[10px] text-dim">{ideation.videoModel.choice} · {ideation.clipCount} clip{ideation.clipCount > 1 ? 's' : ''} · {ideation.targetDurationSec}s</span>
+        <div className="flex items-center gap-2">
+          <ViralityBadge score={ideation.virality?.score} />
+          <span className="font-mono text-[10px] text-dim">{ideation.videoModel.choice} · {ideation.clipCount} clip{ideation.clipCount > 1 ? 's' : ''} · {ideation.targetDurationSec}s</span>
+        </div>
       </div>
       <h3 className="text-sm font-semibold leading-tight">{ideation.title}</h3>
       <p className="text-xs text-dim leading-snug">{ideation.angle}</p>
+      {ideation.virality && <p className="text-[11px] italic text-cream/70 leading-snug">“{ideation.virality.verdict}”</p>}
       <div className="flex flex-wrap gap-1">
         {ideation.keptFromOriginal.slice(0, 3).map((k) => (
           <span key={k} className="text-[10px] font-mono text-orange/80 border border-orange/30 rounded px-1 py-0.5 truncate max-w-full">{k}</span>
@@ -38,9 +44,33 @@ function IdeationCard({ ideation, active, onPick }: { ideation: Ideation; active
   );
 }
 
+function ForecastPanel({ ideation }: { ideation: Ideation }) {
+  const v = ideation.virality;
+  if (!v) return null;
+  return (
+    <section className="bg-surface border border-hairline rounded-lg p-4 flex gap-4 items-start animate-rise">
+      <div className="flex flex-col items-center gap-1">
+        <ScoreRing score={v.score} size={72} />
+        <span className="font-mono text-[9px] uppercase tracking-wider text-dim">{scoreTier(v.score)}</span>
+      </div>
+      <div className="flex-1 space-y-1.5 min-w-0">
+        <p className="text-sm font-medium leading-snug">{v.verdict}</p>
+        <KV k="vs original" v={v.vsOriginal} />
+        {v.risks.length > 0 && (
+          <KV k="risks" v={<span className="text-nsfw/90">{v.risks.join(' · ')}</span>} />
+        )}
+        {v.boosters.length > 0 && (
+          <KV k="nail these" v={<span className="text-sfw/90">{v.boosters.join(' · ')}</span>} />
+        )}
+      </div>
+    </section>
+  );
+}
+
 function IdeationDetail({ ideation }: { ideation: Ideation }) {
   return (
     <div className="space-y-4">
+      <ForecastPanel ideation={ideation} />
       <section className="bg-surface border border-orange/30 rounded-lg p-4 space-y-2">
         <p className="text-sm">{ideation.creativeBrief}</p>
         <KV k="why for profile" v={ideation.whyItWorksForProfile} />
@@ -87,7 +117,9 @@ function IdeationDetail({ ideation }: { ideation: Ideation }) {
 
 export function GenerateView({ presetFormatId }: { presetFormatId: string | null }) {
   const [formats, setFormats] = useState<FormatSummary[]>([]);
+  const [profiles, setProfiles] = useState<{ id: string; name: string }[]>([]);
   const [formatId, setFormatId] = useState(presetFormatId ?? '');
+  const [profileId, setProfileId] = useState('neutral');
   const [strength, setStrength] = useState<VariationStrength>('close');
   const [running, setRunning] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -103,6 +135,7 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
 
   useEffect(() => {
     void listFormats({ limit: 200 }).then((r) => setFormats(r.items.filter((f) => f.schemaVersion !== '0-legacy')));
+    void listProfiles().then((r) => setProfiles(r.items)).catch(() => {});
   }, []);
 
   useEffect(() => { if (presetFormatId) setFormatId(presetFormatId); }, [presetFormatId]);
@@ -112,7 +145,7 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
     const t0 = Date.now();
     const timer = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
     try {
-      const result = await generateIdeations(formatId, strength);
+      const result = await generateIdeations(formatId, strength, profileId === 'neutral' ? undefined : profileId);
       setRun(result);
       setPicked(0);
     } catch (e) {
@@ -124,6 +157,7 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
   };
 
   const selectedFormat = formats.find((f) => f.id === formatId);
+  const forWhom = profileId === 'neutral' ? 'character-neutral' : `for ${profiles.find((p) => p.id === profileId)?.name ?? profileId}`;
 
   return (
     <div className="max-w-5xl mx-auto space-y-5">
@@ -131,7 +165,7 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
       <div className="bg-surface border border-hairline rounded-xl p-5 space-y-4">
         <div className="flex items-center gap-2 text-dim">
           <Sparkles size={15} className="text-orange" />
-          <h2 className="text-xs font-mono uppercase tracking-widest">Format → 3 ideations · character-neutral</h2>
+          <h2 className="text-xs font-mono uppercase tracking-widest">Format → 3 ideations · {forWhom}</h2>
         </div>
         <div className="flex flex-wrap gap-3">
           <select
@@ -140,8 +174,24 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
             className="flex-1 min-w-64 bg-canvas border border-hairline rounded-md px-3 py-2 text-sm focus:outline-none focus:border-orange"
           >
             <option value="">choose a format…</option>
-            {formats.map((f) => <option key={f.id} value={f.id}>{f.title} · {f.archetype}</option>)}
+            {formats.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.viralityScore != null ? `⚡${f.viralityScore} · ` : ''}{f.title} · {f.archetype}
+              </option>
+            ))}
           </select>
+          <div className="flex items-center gap-1.5 bg-canvas border border-hairline rounded-md px-2">
+            <User size={13} className="text-electric" />
+            <select
+              value={profileId}
+              onChange={(e) => setProfileId(e.target.value)}
+              className="bg-transparent py-2 text-sm focus:outline-none cursor-pointer"
+              title="Who is this video for? Neutral = any model, any reference image."
+            >
+              <option value="neutral">neutral — any model</option>
+              {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
           <div className="flex rounded-md border border-hairline overflow-hidden">
             {STRENGTHS.map((s) => (
               <button
@@ -158,8 +208,7 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
           <button
             onClick={() => void start()}
             disabled={running || !formatId}
-            className="bg-orange text-canvas font-semibold rounded-md px-5 py-2 text-sm
-                       hover:bg-orange-soft transition-colors disabled:opacity-40 cursor-pointer"
+            className="btn-charge px-5 py-2 text-sm"
           >
             {running ? 'ideating…' : 'Generate ideation'}
           </button>
@@ -167,6 +216,7 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
         {selectedFormat && (
           <div className="flex items-center gap-2">
             <ArchetypeChip archetype={selectedFormat.archetype} />
+            <ViralityBadge score={selectedFormat.viralityScore} />
             <span className="text-[11px] font-mono text-dim">{selectedFormat.durationSec}s · v{selectedFormat.version}</span>
           </div>
         )}
@@ -188,7 +238,7 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
       </div>
 
       {running && (
-        <div className="bg-surface border border-hairline rounded-xl p-10 flex flex-col items-center gap-3">
+        <div className="bg-surface border border-hairline rounded-xl p-10 flex flex-col items-center gap-3 animate-pop-in">
           <Loader2 size={26} className="text-orange animate-spin" />
           <p className="text-sm">Ideating on <span className="font-mono">Gemini Pro</span> — preserving the mechanism, reinventing the surface</p>
           <p className="font-mono text-xs text-dim">{elapsed}s · typical run 90-150s</p>

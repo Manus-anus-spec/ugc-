@@ -3,9 +3,10 @@
  * Run: npx tsx scripts/compiler-tests.ts
  */
 import {
-  applySanitizeMap, chooseVideoModel, lintMotionPrompt, lintNbPrompt,
+  applyBodyWrap, applySanitizeMap, chooseVideoModel, lintMotionPrompt, lintNbPrompt,
   needsFaceForwardFix, wrapIdentityLock,
 } from '../worker/src/generate/rules';
+import type { ModelProfile } from '../shared/contract';
 import { SAV_PROFILE, SEED_PROFILES } from '../worker/seeds/profiles';
 import { ModelProfileSchema } from '../shared/schemas';
 import type { FormatDna } from '../shared/contract';
@@ -63,6 +64,35 @@ const already = wrapIdentityLock(wrapped, SAV_PROFILE);
 check('wrap is idempotent', already === wrapped);
 check('wrapped prompt passes descriptor lint (closer mentions freckles legitimately)',
   lintNbPrompt(wrapped, SAV_PROFILE, 0).length === 0, JSON.stringify(lintNbPrompt(wrapped, SAV_PROFILE, 0)));
+
+// ── self-contained motion: dialogue must live inside the motionPrompt ──
+const dlg = 'wait till you see what he texted me';
+const missing = lintMotionPrompt('Selfie angle with micro-shake, she laughs in the kitchen.', SAV_PROFILE, 'MULTI_CLIP', 0, dlg);
+check('missing dialogue caught', missing.some((v) => v.problem.includes('dialogue')), JSON.stringify(missing));
+const embedded = lintMotionPrompt(
+  `Selfie angle with micro-shake, she smirks then laughs — she says, lips synced: "${dlg}" — kitchen counter behind her.`,
+  SAV_PROFILE, 'MULTI_CLIP', 0, dlg,
+);
+check('embedded dialogue passes', !embedded.some((v) => v.problem.includes('dialogue')), JSON.stringify(embedded));
+const longWithDialogue = lintMotionPrompt(`${'x'.repeat(400)} she says: "${dlg}"`, SAV_PROFILE, 'MULTI_CLIP', 0, dlg);
+check('dialogue beat allows up to 600 chars', !longWithDialogue.some((v) => v.problem.includes('cap')), JSON.stringify(longWithDialogue));
+const longNoDialogue = lintMotionPrompt('x'.repeat(400), SAV_PROFILE, 'MULTI_CLIP', 0);
+check('no-dialogue beat still capped at 310', longNoDialogue.some((v) => v.problem.includes('310')));
+
+// ── Seedream body wrap ──
+const bodyProfile = {
+  ...SAV_PROFILE,
+  body: {
+    build: 'fit hourglass, natural bust, toned waist',
+    proportions: 'balanced bust-to-hip, defined waist',
+    skin: 'natural texture with visible pores',
+    sdEnhancementNotes: 'Enhance curves naturally within the outfit, keep proportions realistic.',
+  },
+} as ModelProfile;
+const wrappedSd = applyBodyWrap('Enhance the outfit fit. Keep face and background exactly.', bodyProfile);
+check('body wrap appended when missing', wrappedSd.includes('fit hourglass'), wrappedSd);
+check('body wrap idempotent', applyBodyWrap(wrappedSd, bodyProfile) === wrappedSd);
+check('no body section → unchanged', applyBodyWrap('Enhance the outfit fit.', SAV_PROFILE) === 'Enhance the outfit fit.');
 
 // ── sanitize map ──
 const sanitized = applySanitizeMap('she wears lingerie and a bikini, very sexy', SAV_PROFILE);

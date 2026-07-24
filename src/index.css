@@ -1,32 +1,90 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-/* ── Design system: "edit suite" · Classic Black / Golden Pitch / Power Orange / Off White
-     (docs/design-direction.md, approved 2026-07-22) ── */
+/* ── Design system v2: "creative charge" · deep indigo-black canvas, electric accents
+     (Power Orange → Hot Magenta → Electric Violet), motion that rewards action.
+     Evolution of the approved edit-suite theme (docs/design-direction.md). ── */
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
-  --color-canvas: #0C0B09;
-  --color-surface: #171510;
-  --color-raised: #1F1C15;
-  --color-hairline: #2C2921;
-  --color-pitch: #3E3A2C;
-  --color-cream: #EDEAD9;
-  --color-dim: #9C978A;
-  --color-orange: #E8541E;
-  --color-orange-soft: #F0723F;
-  --color-sfw: #86B97E;
-  --color-borderline: #E5A83B;
-  --color-nsfw: #D94F63;
+  --color-canvas: #0A0912;
+  --color-surface: #131120;
+  --color-raised: #1C1830;
+  --color-hairline: #2A2542;
+  --color-pitch: #4A4370;
+  --color-cream: #F1EEE4;
+  --color-dim: #9D97B8;
+  --color-orange: #FF5C1F;
+  --color-orange-soft: #FF7E4A;
+  --color-pop: #F43F8E;
+  --color-electric: #8B7CFF;
+  --color-sfw: #5FD68F;
+  --color-borderline: #FFC24B;
+  --color-nsfw: #FF5C7A;
+
+  --animate-rise: rise 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-pop-in: pop-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  --animate-shimmer: shimmer 2.4s linear infinite;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes shimmer {
+  from { background-position: 200% 50%; }
+  to { background-position: -200% 50%; }
 }
 
 @layer base {
   body {
     @apply antialiased bg-canvas text-cream;
+    background-image:
+      radial-gradient(ellipse 60% 40% at 85% -10%, rgba(139, 124, 255, 0.07), transparent),
+      radial-gradient(ellipse 50% 35% at 10% 110%, rgba(255, 92, 31, 0.05), transparent);
+    background-attachment: fixed;
   }
   ::selection {
     @apply bg-orange text-canvas;
+  }
+}
+
+@layer components {
+  /* Primary action — the energy gradient. Use on the money buttons only. */
+  .btn-charge {
+    @apply relative font-semibold text-canvas rounded-md cursor-pointer transition-all duration-200;
+    background: linear-gradient(100deg, var(--color-orange), var(--color-pop));
+    box-shadow: 0 0 0 rgba(255, 92, 31, 0);
+  }
+  .btn-charge:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 24px rgba(244, 63, 142, 0.35);
+  }
+  .btn-charge:active:not(:disabled) { transform: translateY(0); }
+  .btn-charge:disabled { @apply opacity-40 cursor-default; }
+
+  /* Card that lifts on hover — library/ideation cards. */
+  .card-lift {
+    @apply transition-all duration-200;
+  }
+  .card-lift:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 28px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(139, 124, 255, 0.18);
+  }
+
+  /* Animated gradient text — sparingly, for the one headline that matters. */
+  .text-charge {
+    background: linear-gradient(90deg, var(--color-orange), var(--color-pop), var(--color-electric), var(--color-orange));
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: var(--animate-shimmer);
   }
 }
 

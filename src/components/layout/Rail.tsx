@@ -21,7 +21,7 @@ export function Rail({ tab, onTab, onSignOut }: { tab: Tab; onTab: (t: Tab) => v
   return (
     <nav className="w-48 shrink-0 border-r border-hairline flex flex-col p-3 gap-1 sticky top-0 h-screen">
       <div className="px-2 py-3 mb-2">
-        <div className="text-sm font-semibold tracking-tight">UGC Reverse-Engineer</div>
+        <div className="text-sm font-bold tracking-tight text-charge">UGC Reverse-Engineer</div>
         <div className="flex items-center gap-1.5 mt-1">
           <span className={`w-1.5 h-1.5 rounded-full ${healthy === null ? 'bg-pitch' : healthy ? 'bg-sfw' : 'bg-nsfw'}`} />
           <span className="text-[10px] font-mono text-dim">ugc-api</span>
@@ -31,8 +31,10 @@ export function Rail({ tab, onTab, onSignOut }: { tab: Tab; onTab: (t: Tab) => v
         <button
           key={id}
           onClick={() => onTab(id)}
-          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors cursor-pointer text-left
-            ${tab === id ? 'bg-raised text-orange font-medium' : 'text-dim hover:text-cream hover:bg-surface'}`}
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-all duration-200 cursor-pointer text-left
+            ${tab === id
+              ? 'bg-raised text-orange font-medium shadow-[inset_2px_0_0_var(--color-orange)]'
+              : 'text-dim hover:text-cream hover:bg-surface hover:translate-x-0.5'}`}
         >
           <Icon size={15} />
           {label}

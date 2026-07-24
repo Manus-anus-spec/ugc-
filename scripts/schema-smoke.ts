@@ -31,12 +31,18 @@ const frame = {
   },
 };
 const fixture = {
-  title: 'Elevator outfit-check freeze', archetype: 'outfit_showcase', tags: ['outfit', 'elevator'],
+  title: 'Elevator outfit-check freeze', archetype: 'outfit_showcase', formatType: 'outfit_showcase',
+  tags: ['outfit', 'elevator'],
   hook: { type: 'visual', openingVisual: 'subject frozen mid-step in elevator', mechanism: 'motion freeze pattern interrupt' },
   beats: [beat],
   camera: {
     setup: 'propped_on_surface', facing: 'front', phoneVisible: 'no', distance: '~1.5m propped',
     heightAngle: 'knee height tilted up 15°', motion: 'static', hiddenArm: 'none',
+    dynamics: {
+      stability: 'locked_off', shake: 'none — phone propped on ledge', sway: 'none', bob: 'none',
+      reframes: 'none', focusExposure: 'steady throughout',
+      motionSignature: 'locked-off propped phone at knee height tilted up 15°, zero shake, subject moves through a static frame',
+    },
   },
   setting: { locationType: 'hotel elevator, mirrored', timeOfDay: 'evening', lighting: 'overhead warm LEDs', keyProps: ['mirror'], colorPalette: 'warm gold + black', mood: 'luxe' },
   wardrobeRole: { role: 'going-out fit', garments: ['satin slip dress'], stylingNotes: 'heels, small bag' },
@@ -47,6 +53,20 @@ const fixture = {
   difficulty: { environment: 2, motion: 1, camera: 1, overall: 2, workarounds: [] },
   swapMap: { mustKeep: ['freeze at 0:02', 'propped knee-height angle'], swappable: ['identity', 'outfit color', 'specific elevator'] },
   contentFlag: { rating: 'sfw', triggers: [] },
+  virality: {
+    overall: 58, verdict: 'Competent freeze gimmick with no share trigger — average, not viral.',
+    dimensions: {
+      hook: { score: 62, reason: 'freeze at 0:02 is a real pattern interrupt, but 0:00-0:01 is a plain walk-in' },
+      retention: { score: 60, reason: 'single 8s take, payoff at 0:06 — one dead zone 0:03-0:05' },
+      emotion: { score: 45, reason: 'mild aesthetic desire, nothing stronger' },
+      share: { score: 38, reason: 'nothing to send to a friend — no identity signal, no joke' },
+      replay: { score: 50, reason: 'freeze invites one rewatch to check the trick' },
+      algo: { score: 65, reason: '8s length loops well; trending audio dependency is current' },
+    },
+    strengths: ['clean freeze-frame mechanic'], weaknesses: ['no share trigger', 'flat first second'],
+    ceiling: '20-80K on a mid-size account — capped by zero shareability',
+    improvements: ['put the freeze inside the first second', 'add a comment-bait overlay line'],
+  },
   frames: [frame],
   characterObservation: { appearance: 'n/a', outfit: 'satin slip dress', vibe: 'confident' },
 };

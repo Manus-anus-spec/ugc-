@@ -170,6 +170,67 @@ export const NAOMI_PROFILE: ModelProfile = {
   },
 };
 
+export const BELLE_PROFILE: ModelProfile = {
+  ...structuredClone(SAV_PROFILE),
+  id: 'belle',
+  name: 'Belle',
+  refs: { strategy: 'single_ref_base64' },   // NB nano-banana-2 single/base64 ref method (face + body sheets)
+  identityLock: {
+    opener: 'Candid amateur iPhone photo of the SAME woman shown in the reference image. Raw iPhone footage aesthetic.',
+    closer: 'She is completely alone. No other person visible. Match the uploaded reference image face exactly — do not alter her face, face shape, copper-red hair, heavy natural freckles, or green blue-green eyes. Keep her youthful early-20s look, zero signs of aging. Realistic natural skin texture with visible pores and freckles, NOT airbrushed, NOT over-smoothed. NOT professional photography, NOT studio lighting.',
+    strippedDescriptors: [
+      'copper[- ]?red', 'ginger', 'freckle[sd]?', 'green[- ]?eyes', 'blue[- ]?green eyes',
+      '2[0-3][- ]year[- ]old', 'texan', 'redhead',
+    ],
+  },
+  looks: {
+    ...structuredClone(SAV_PROFILE.looks),
+    makeup: {
+      default: 'Light natural everyday makeup — freckles showing through, mascara, groomed auburn brows, soft nude-rose lip.',
+      uniform: 'Soft country glam — subtle bronze eye, individual lashes, freckle-forward, warm nude lip.',
+    },
+    hair: {
+      default: 'long loose copper-red waves, down',
+      uniform: 'copper waves under a cowboy hat, or a loose braid',
+      pool: 'slightly damp copper waves, natural',
+    },
+    wardrobeDefaults: {
+      'signature': 'cowgirl/western: Daisy Dukes denim shorts, cowboy boots, fitted western/plaid shirt tied at the waist, cowboy hat',
+      'going-out fit': 'fitted bodycon mini dress or a going-out western fit, exact color per scene',
+      'casual': 'fitted ribbed tank and denim shorts, or a fitted knit set',
+      'athleisure': 'fitted two-piece outfit',
+      'swim': 'fitted two-piece outfit',
+      'ranch work': 'fitted plaid shirt, denim cutoffs, boots',
+    },
+    workContextRatio: '20-30% cowgirl/western signature / 70-80% off-duty ranch lifestyle',
+  },
+  world: {
+    locationWhitelist: [
+      'Twin Oaks Ranch porch', 'ranch corral / cattle fence', 'horse stable / barn',
+      'open Texas pasture', 'faded red 1970s Chevy pickup (tailgate)', 'dirt road',
+      'the Rusty Spur honky-tonk (mechanical bull, neon, dance floor)', 'rodeo arena',
+      'rustic farmhouse kitchen', 'farmhouse bedroom', 'hay field at golden hour',
+    ],
+    locationBanlist: ['mansion', 'yoga studio', 'generic gym', 'dark rooms', 'landmark backgrounds', 'city skyline'],
+    persona: 'a 22-year-old Texas ranch girl — fiery freckled redhead, animal-softie, rodeo/barrel-racing, Southern cooking; visual-first lifestyle Instagram creator',
+    audienceICP: 'Men 35-50+, American, financially stable',
+  },
+  voice: {
+    captionStyle: 'warm and playful with a light Texas drawl, mostly lowercase, occasional y\'all / ain\'t / fixin\' to / darlin\', 1 country emoji, no over-punctuation',
+    overlayStyle: 'first person, warm with a wink, country-specific, under 15 words, engineered to trigger comments/debate/shares',
+    exampleOverlays: [
+      'me n Cash beat the boys barrel time again dont tell em it was easy',
+      'told mama Buford got loose on the highway never seen a woman move that fast',
+      'got my horse my dog n mamas cookin what do i need a man for',
+    ],
+    bannedWords: ['babe', 'hun', 'bb'],
+  },
+  contentPolicy: {
+    nsfwAllowed: false,   // SFW IG account for now (pivot: NSFW/Telegram later)
+    sanitizeMap: SANITIZE_MAP,
+  },
+};
+
 export const NIKO_DEFAULT_PROFILE: ModelProfile = {
   ...structuredClone(NAOMI_PROFILE),
   id: 'niko-default',
@@ -183,4 +244,4 @@ export const NIKO_DEFAULT_PROFILE: ModelProfile = {
   },
 };
 
-export const SEED_PROFILES = [SAV_PROFILE, NAOMI_PROFILE, NIKO_DEFAULT_PROFILE];
+export const SEED_PROFILES = [SAV_PROFILE, NAOMI_PROFILE, BELLE_PROFILE, NIKO_DEFAULT_PROFILE];

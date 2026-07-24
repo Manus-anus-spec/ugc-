@@ -1,4 +1,4 @@
-import type { FormatDna, FormatSummary, Platform, ContentRating } from '../../shared/contract';
+import type { FormatDna, FormatSummary, FormatType, Platform, ContentRating } from '../../shared/contract';
 import type { Env } from './env';
 
 /** Raw shape of a formats row joined with its group_concat'd tags. */
@@ -6,6 +6,8 @@ export interface FormatRow {
   id: string;
   title: string;
   archetype: string;
+  format_type: string | null;
+  virality_score: number | null;
   hook_type: string | null;
   content_rating: string | null;
   duration_sec: number | null;
@@ -27,6 +29,8 @@ export function rowToSummary(row: FormatRow): FormatSummary {
     id: row.id,
     title: row.title,
     archetype: row.archetype,
+    formatType: (row.format_type as FormatType | null),
+    viralityScore: row.virality_score,
     hookType: row.hook_type,
     contentRating: (row.content_rating as ContentRating | null),
     durationSec: row.duration_sec,
@@ -72,11 +76,14 @@ export function ftsSyncStatements(env: Env, stored: FormatDna, tags: string[]): 
 export function formatInsertStatements(env: Env, stored: FormatDna, tags: string[], now: string): D1PreparedStatement[] {
   return [
     env.DB.prepare(
-      `INSERT INTO formats (id, title, archetype, hook_type, content_rating, duration_sec, clip_count,
-         platform, source_url, thumbnail_url, schema_version, current_version, dna, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '1', 1, ?, ?, ?)`
+      `INSERT INTO formats (id, title, archetype, format_type, virality_score, hook_type, content_rating,
+         duration_sec, clip_count, platform, source_url, thumbnail_url, schema_version, current_version,
+         dna, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '1', 1, ?, ?, ?)`
     ).bind(
-      stored.id, stored.title, stored.archetype, stored.hook.type, stored.contentFlag.rating,
+      stored.id, stored.title, stored.archetype, stored.formatType ?? null,
+      stored.virality ? Math.round(stored.virality.overall) : null,
+      stored.hook.type, stored.contentFlag.rating,
       stored.source.durationSec, stored.source.clipCount, stored.source.platform,
       stored.source.url ?? null, stored.source.thumbnailUrl ?? null,
       JSON.stringify(stored), now, now,
@@ -87,7 +94,7 @@ export function formatInsertStatements(env: Env, stored: FormatDna, tags: string
 }
 
 export const SUMMARY_SELECT = `
-  SELECT f.id, f.title, f.archetype, f.hook_type, f.content_rating, f.duration_sec,
+  SELECT f.id, f.title, f.archetype, f.format_type, f.virality_score, f.hook_type, f.content_rating, f.duration_sec,
          f.clip_count, f.platform, f.source_url, f.thumbnail_url, f.schema_version,
          f.current_version, f.dna, f.legacy_markdown, f.created_at, f.updated_at,
          (SELECT group_concat(t.tag, ',') FROM format_tags t WHERE t.format_id = f.id) AS tags
