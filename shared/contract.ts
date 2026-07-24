@@ -14,9 +14,11 @@ import {
   CameraSetupKindSchema,
   CameraSetupSchema,
   ContentRatingSchema,
+  EditPlanSchema,
   FormatDnaSchema,
   FormatSummarySchema,
   FormatTypeSchema,
+  LipSyncPlanSchema,
   FrameSpecSchema,
   GenerationRunSchema,
   GenerationStatusSchema,
@@ -59,6 +61,8 @@ export type AnalyzerOutput = z.infer<typeof AnalyzerOutputSchema>;
 export type ModelProfile = z.infer<typeof ModelProfileSchema>;
 
 export type BeatGeneration = z.infer<typeof BeatGenerationSchema>;
+export type EditPlan = z.infer<typeof EditPlanSchema>;
+export type LipSyncPlan = z.infer<typeof LipSyncPlanSchema>;
 export type Ideation = z.infer<typeof IdeationSchema>;
 export type GenerationRun = z.infer<typeof GenerationRunSchema>;
 

@@ -73,6 +73,19 @@ function normalize(s: string): string {
   return s.toLowerCase().replace(/[“”"'’‘…]/g, '').replace(/\s+/g, ' ').trim();
 }
 
+/** Camera-motion vocabulary a motion prompt must carry to reproduce the source's camera FEEL. */
+const CAMERA_PHYSICS_TERMS = /(handheld|micro[- ]?shake|shak(e|y|ing)|sway|bob|locked[- ]?off|static|tripod|propped|drift|pan(s|ning)?\b|tilt|reframe|steady|stabili[sz]ed|selfie angle|mirror selfie|placed camera|friend-filmed|walking camera|follow(s|ing)? (her|the subject))/i;
+
+/** Guarantee the camera physics structurally: if the DNA carries a motion signature and the
+ *  LLM's motionPrompt has NO camera-motion language at all, prepend the signature — the
+ *  camera feel is load-bearing for realism and must never be silently dropped. */
+export function ensureCameraPhysics(motionPrompt: string, dna: FormatDna): string {
+  const sig = dna.camera.dynamics?.motionSignature?.trim();
+  if (!sig) return motionPrompt;
+  if (CAMERA_PHYSICS_TERMS.test(motionPrompt)) return motionPrompt;
+  return `${sig.replace(/\.$/, '')}. ${motionPrompt.trim()}`;
+}
+
 /** Guarantee the profile body pass structurally: if the profile carries a body section and the
  *  LLM's sdPrompt ignored it, append the enhancement notes — the body wrap must never be skipped. */
 export function applyBodyWrap(sdPrompt: string, profile: ModelProfile): string {
@@ -142,7 +155,7 @@ export function applySanitizeMap(text: string, profile: ModelProfile): string {
 }
 
 /** Post-process one LLM ideation: enforce every deterministic rule. Returns violations that survived auto-fix. */
-export function enforceIdeation(ideation: Ideation, profile: ModelProfile): LintViolation[] {
+export function enforceIdeation(ideation: Ideation, profile: ModelProfile, dna: FormatDna): LintViolation[] {
   const violations: LintViolation[] = [];
   const hasDialogue = ideation.beats.some((b) => !!b.dialogue?.trim());
   const ruled = chooseVideoModel({
@@ -158,6 +171,7 @@ export function enforceIdeation(ideation: Ideation, profile: ModelProfile): Lint
     beat.nbPrompt = autofixNbSlop(beat.nbPrompt);
     beat.nbPrompt = wrapIdentityLock(beat.nbPrompt, profile);
     beat.sdPrompt = applyBodyWrap(beat.sdPrompt, profile);
+    beat.motionPrompt = ensureCameraPhysics(beat.motionPrompt, dna);
     beat.motionPromptCharCount = beat.motionPrompt.length;
     if (!beat.sdPrompt.trim()) {
       violations.push({ beatIndex: beat.clipIndex, field: 'sdPrompt', problem: 'empty — SD pass is mandatory, never skip' });

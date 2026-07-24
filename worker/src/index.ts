@@ -14,6 +14,7 @@ import {
 import { exportBriefs, exportFormat, exportJson } from './routes/export';
 import { deleteProfile, getProfile, listProfiles, putProfile } from './routes/profiles';
 import { getJob } from './routes/jobs';
+import { backfillTaxonomy } from './routes/admin';
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -97,6 +98,9 @@ export default {
       // ── admin ──
       if (m === 'POST' && seg[0] === 'admin' && seg[1] === 'reindex-fts' && seg.length === 2) {
         return await reindexFts(req, env);
+      }
+      if (m === 'POST' && seg[0] === 'admin' && seg[1] === 'backfill-taxonomy' && seg.length === 2) {
+        return await backfillTaxonomy(req, env, ctx);
       }
 
       return err('not_found', `no route: ${m} ${url.pathname}`, 404, req, env);

@@ -5,7 +5,7 @@
  * back to, which is what killed the old Naomi→Sav bug.
  */
 import { z } from 'zod';
-import { GenerationRunSchema, IdeationSchema, ModelProfileSchema, VariationStrengthSchema, ViralityForecastSchema } from '../../../shared/schemas';
+import { EditPlanSchema, GenerationRunSchema, IdeationSchema, LipSyncPlanSchema, ModelProfileSchema, VariationStrengthSchema, ViralityForecastSchema } from '../../../shared/schemas';
 import type { FormatDna, GenerationRun, ModelProfile } from '../../../shared/contract';
 import { API_VERSION, type Env } from '../env';
 import { err, json, newId, nowIso } from '../http';
@@ -30,8 +30,13 @@ const RequestSchema = z.object({
  *  item schemas (see geminiSafeSchema); the count is enforced below instead. */
 const LlmOutputSchema = z.object({
   formulaExtracted: z.string(),
-  // virality forecast is REQUIRED on new runs (optional in the stored IdeationSchema only for old rows)
-  ideations: z.array(IdeationSchema.extend({ virality: ViralityForecastSchema })),
+  // virality forecast, edit plan, and lip-sync plan are REQUIRED on new runs
+  // (optional in the stored IdeationSchema only so old rows keep parsing)
+  ideations: z.array(IdeationSchema.extend({
+    virality: ViralityForecastSchema,
+    editPlan: EditPlanSchema,
+    lipSyncPlan: LipSyncPlanSchema,
+  })),
 });
 const LLM_JSON_SCHEMA = z.toJSONSchema(LlmOutputSchema) as Record<string, unknown>;
 
@@ -107,13 +112,13 @@ async function runGeneration(
   }
 
   // ── Layer 1 (post): enforce every deterministic rule; one targeted rewrite, then hard-fail ──
-  let violations = output.data.ideations.flatMap((i) => enforceIdeation(i, profile));
+  let violations = output.data.ideations.flatMap((i) => enforceIdeation(i, profile, dna));
   if (violations.length > 0) {
     raw = (await call(buildLintRepairPrompt(violationsToText(violations), JSON.stringify(output.data)))).text;
     const repaired = LlmOutputSchema.safeParse(tryParse(raw));
     if (repaired.success) {
       output = repaired;
-      violations = output.data.ideations.flatMap((i) => enforceIdeation(i, profile));
+      violations = output.data.ideations.flatMap((i) => enforceIdeation(i, profile, dna));
     }
   }
   if (violations.length > 0) {

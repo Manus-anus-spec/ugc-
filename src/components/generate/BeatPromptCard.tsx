@@ -46,10 +46,12 @@ export function BeatPromptCard({ beat, beatNumber, videoFormat }: {
       <header className="px-4 py-2.5 border-b border-hairline space-y-1">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            <span className="font-mono text-[11px] text-orange shrink-0">beat {beatNumber + 1} · {beat.timestamp}</span>
+            <span className="font-mono text-[11px] text-orange shrink-0">
+              {videoFormat === 'ONE_SHOT' ? `full take · ${beat.timestamp}` : `clip ${beatNumber + 1} · ${beat.timestamp}`}
+            </span>
             <span className="text-xs text-dim truncate">{beat.action}</span>
           </div>
-          <CopyButton text={fullBeatBlock(beat, beatNumber)} label="copy full beat" />
+          <CopyButton text={fullBeatBlock(beat, beatNumber)} label={videoFormat === 'ONE_SHOT' ? 'copy full take' : 'copy full clip'} />
         </div>
         {(beat.dialogue || beat.expression) && (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5">

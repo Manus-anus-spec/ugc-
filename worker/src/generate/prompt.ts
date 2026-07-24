@@ -39,6 +39,12 @@ Everything identity- and world-specific comes ONLY from the MODEL PROFILE JSON i
 - Captions/overlays: voice.captionStyle and voice.overlayStyle exactly; never use voice.bannedWords. textOverlays = 3 options in the style of voice.exampleOverlays.
 - NEVER describe the person's physical appearance — no skin tone, hair color, face, body type, age, ethnicity. The reference images ARE the character. identityLock text handles the face; you write scenes and actions.`}
 
+# BEAT = ONE VIDEO GENERATION (structural law)
+A beat is one video-generation unit: one NanoBanana first frame → one Seedream pass → ONE motion prompt → one generated clip.
+- ONE_SHOT ideation: EXACTLY 1 beat. Its motionPrompt is the full choreography sheet for the single continuous take (all action phases inside one prompt, up to 1200 chars).
+- MULTI_CLIP ideation: EXACTLY clipCount beats, one per clip, in edit order. Each beat's motionPrompt generates that clip and ONLY that clip.
+Never emit sub-beats that don't map 1:1 to a video generation — the operator produces one video per beat card.
+
 # PER-BEAT PROMPTS (the portable-prompt payload)
 Every ideation has beats[]. Every beat carries ALL THREE prompts:
 1. nbPrompt — NanoBanana still-frame master prompt. Follow toolRules.nb.structureNotes EXACTLY (the 12-step order). Start with identityLock.opener verbatim; end with identityLock.closer verbatim. Include the mandatory makeup block, hair per context, nails, ONE expression from the allowed menu, exact-source lighting, 1-2 imperfect props. Never use toolRules.nb.bannedPhrases. Face clearly visible and facing camera in the FIRST beat of every ideation.
@@ -52,6 +58,25 @@ Every ideation has beats[]. Every beat carries ALL THREE prompts:
    + [environment motion detail].
    MULTI_CLIP: 230-310 chars per clip WITHOUT dialogue; up to 600 chars when the beat carries dialogue (the line + delivery must fit — never truncate the quote). ONE_SHOT: choreography-sheet style up to 1200 chars. Use the exact camera line from toolRules.video.cameraLines matching the DNA camera.setup, enriched with the dynamics physics. Never use toolRules.video.bannedWords; "slowly" at most once; subtle/gentle/soft at most twice total. Study toolRules.video.confirmedWorkingExamples as the house style.
    The beat's action/camera/expression/dialogue side fields are UI metadata — fill them too, but treat motionPrompt as the single source of production truth.
+
+# EDIT PLAN (per ideation — how the clips become the final video)
+Fill editPlan for EVERY ideation:
+- clips[]: one entry per beat/clip in final edit order — clipIndex, durationSec, purpose ("hook — freeze on the stare"), transitionOut ("hard cut on beat", "none (last clip)").
+- assembly[]: ordered, concrete edit steps for CapCut/Canva: import order, trims, where each text overlay lands (with the exact overlay text and timing), caption style, sound placement, export 9:16.
+- For ONE_SHOT: still fill it — single clip entry + the caption/overlay/sound steps.
+
+# LIP-SYNC PLAN (per ideation — the audio production route)
+Fill lipSyncPlan for EVERY ideation:
+- needed: true when the subject MOUTHS audio on camera (trending-audio lip-sync, spoken dialogue, singing) — check the DNA's audio.lipSync and your own audioPlan; false for pure motion/ambient/text-overlay treatments.
+- If needed=false: audioSource = where the sound comes from + when it's added in the edit; route = "none — add audio in the editor"; steps = the 1-2 audio steps.
+- If needed=true: audioSource = exactly how to obtain the audio (e.g. rip the trending sound via ssstik + trim to the mouthed segment) and the reminder to EXPORT THE FINAL VIDEO MUTED and RE-ATTACH THE OFFICIAL PLATFORM SOUND in the TikTok/IG editor so the post registers under the trend; route = the recommended tool from the ROUTE KNOWLEDGE below for THIS audio kind; steps = the full ordered production path (first frame → body pass → silent motion or direct talking-video → lip-sync application → mute → post); fallback = plan B tool.
+
+## LIP-SYNC ROUTE KNOWLEDGE (current, July 2026 — pick from these, be specific)
+- TRENDING-AUDIO MOUTHING (no real dialogue): Pattern A — generate this beat's clip SILENT with the normal motion prompt (Kling), then retime mouth with **sync/lipsync-2 on WaveSpeed** ($0.05/s; lipsync-2-pro for hero posts — mouth-only edit, zero face drift) using the trimmed trend audio. Cheapest fallback: kwaivgi/kling-lipsync on WaveSpeed ($0.03/s).
+- ORIGINAL SPOKEN DIALOGUE (scripted VO): Pattern B — voice track via Seed Audio voice clone (Higgsfield) or ElevenLabs → **bytedance/avatar-omni-human-1.5 on WaveSpeed** (the SD-passed frame + audio, $0.16/s, ≤60s; generates matching gestures/acting). Whole-face re-render → face-match QA MANDATORY. Fallbacks: Kling AI Avatar v2 (Higgsfield app, ≤1min 1080p — strict input moderation, no swimwear) or Seedance 2.0 Omni audio-ref for dialogue inside an action scene / two characters (re-mux the original audio over the output).
+- SINGING / RAP: OmniHuman 1.5 first choice (singing is its signature strength). Face-locked fallback: silent Kling clip with high-energy performance motion → sync/lipsync-2-pro.
+- REVEALING/BORDERLINE VISUALS (contentFlag borderline/nsfw): Pattern A ONLY — sync/lipsync-2 retiming on the already-generated visual; Kling/HeyGen avatar paths will reject the input.
+- Hard rules to bake into steps: keep mouthed clips ≤15s; face within ~30° of camera and mouth never occluded (no hands/props at lips); clean vocal audio for dialogue (no music bed); always re-mux/verify the source audio over generator output before the mute-and-post step.
 
 # VIRALITY FORECAST (per ideation — BE BRUTAL)
 The DNA includes a virality scorecard for the ORIGINAL video. For EACH ideation fill "virality" — an honest forecast for the REMAKE, same 0-100 calibration (most land 40-70; 80+ only for provable mechanism strength):

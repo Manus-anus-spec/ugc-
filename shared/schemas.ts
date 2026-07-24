@@ -208,6 +208,7 @@ export const FormatDnaSchema = z.object({
     mood: z.string().optional(),
     voiceoverStyle: z.string().optional(),
     trendingSoundDependent: z.boolean(),
+    lipSync: z.boolean().optional(),   // does the creator MOUTH the audio on camera? (drives the lip-sync route)
     syncNotes: z.string().optional(),  // "cuts land on drops"
   }),
   textOverlays: z.object({
@@ -379,6 +380,33 @@ export const BeatGenerationSchema = z.object({
   motionPromptCharCount: z.number().int(),  // enforced ≤310/clip (multi) or 800-1200 (one-shot Kling)
 });
 
+/**
+ * How to physically assemble the final video from the generated clips —
+ * the editing structure the operator follows in CapCut/Canva.
+ */
+export const EditPlanSchema = z.object({
+  clips: z.array(z.object({
+    clipIndex: z.number().int(),
+    durationSec: z.number(),
+    purpose: z.string(),            // "hook — freeze on the stare", "payoff reveal"
+    transitionOut: z.string(),      // "hard cut on beat" | "none (last clip)"
+  })),
+  assembly: z.array(z.string()),    // ordered edit steps incl. caption/text-overlay placement
+  captionsNote: z.string().optional(),
+});
+
+/**
+ * The lip-sync production route for this ideation — which tool, which order,
+ * exact steps. Only meaningful when the treatment has mouthed audio/dialogue.
+ */
+export const LipSyncPlanSchema = z.object({
+  needed: z.boolean(),
+  audioSource: z.string(),          // "rip the trending sound (ssstik) — post with the ORIGINAL platform audio re-attached"
+  route: z.string(),                // recommended tool/pipeline for THIS clip's kind of audio
+  steps: z.array(z.string()),       // exact production steps start→finish
+  fallback: z.string().optional(),  // plan B if the primary tool fights the content
+});
+
 /** One of the ~3 treatments: keeps whyItWorks + swapMap.mustKeep, reinvents the rest. */
 export const IdeationSchema = z.object({
   index: z.number().int(),          // 0..N within the run
@@ -399,6 +427,8 @@ export const IdeationSchema = z.object({
     description: z.string(),
     syncNotes: z.string().optional(),
   }),
+  lipSyncPlan: LipSyncPlanSchema.optional(),  // required for new runs (generator schema); optional for old rows
+  editPlan: EditPlanSchema.optional(),        // required for new runs (generator schema); optional for old rows
   editingNotes: z.string(),
   copy: z.object({
     caption: z.string(),

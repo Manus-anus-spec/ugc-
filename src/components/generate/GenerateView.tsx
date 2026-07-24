@@ -80,10 +80,49 @@ function IdeationDetail({ ideation }: { ideation: Ideation }) {
       </section>
 
       <div className="space-y-3">
+        <p className="font-mono text-[10px] uppercase tracking-wider text-dim">
+          {ideation.videoFormat === 'ONE_SHOT'
+            ? '1 continuous take — one NB frame → one SD pass → one motion prompt'
+            : `${ideation.beats.length} clips — each card = one full generation (NB → SD → motion), assembled per the edit plan`}
+        </p>
         {ideation.beats.map((b, idx) => (
           <BeatPromptCard key={idx} beat={b} beatNumber={idx} videoFormat={ideation.videoFormat} />
         ))}
       </div>
+
+      {ideation.lipSyncPlan?.needed && (
+        <Section title="Lip-sync production route" aside={<span className="font-mono text-[10px] text-pop">🗣 mouthed audio</span>}>
+          <KV k="audio source" v={ideation.lipSyncPlan.audioSource} />
+          <KV k="route" v={<span className="font-medium">{ideation.lipSyncPlan.route}</span>} />
+          <div className="mt-2 space-y-1">
+            {ideation.lipSyncPlan.steps.map((s, i) => (
+              <p key={i} className="text-sm text-cream/90"><span className="font-mono text-[11px] text-orange mr-2">{i + 1}.</span>{s}</p>
+            ))}
+          </div>
+          {ideation.lipSyncPlan.fallback && <KV k="plan B" v={ideation.lipSyncPlan.fallback} />}
+        </Section>
+      )}
+
+      {ideation.editPlan && (
+        <Section title="Edit plan — clips → final video">
+          <div className="space-y-1 mt-1">
+            {ideation.editPlan.clips.map((c, i) => (
+              <div key={i} className="flex items-center gap-3 text-sm">
+                <span className="font-mono text-[11px] text-orange w-14 shrink-0">clip {c.clipIndex + 1}</span>
+                <span className="font-mono text-[11px] text-dim w-10 shrink-0">{c.durationSec}s</span>
+                <span className="flex-1">{c.purpose}</span>
+                <span className="font-mono text-[11px] text-dim">{c.transitionOut}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 space-y-1">
+            {ideation.editPlan.assembly.map((s, i) => (
+              <p key={i} className="text-sm text-cream/90">□ {s}</p>
+            ))}
+          </div>
+          {ideation.editPlan.captionsNote && <KV k="captions" v={ideation.editPlan.captionsNote} />}
+        </Section>
+      )}
 
       <Section title="Copy & audio">
         <KV k="caption" v={<span className="font-mono text-sm">{ideation.copy.caption}</span>} />

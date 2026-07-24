@@ -90,6 +90,14 @@ curl -s "$UGC_API/export/briefs" -H "X-API-Key: $UGC_KEY"               # produc
 curl -s "$UGC_API/export/briefs?profile=sav" -H "X-API-Key: $UGC_KEY"   # filtered per model
 ```
 
+### 6. Admin
+
+```bash
+# Classify + score pre-v2 rows from their stored DNA (3 per call; repeat until done:true):
+curl -s -X POST "$UGC_API/admin/backfill-taxonomy?limit=3" -H "X-API-Key: $UGC_KEY"
+curl -s -X POST "$UGC_API/admin/reindex-fts" -H "X-API-Key: $UGC_KEY"
+```
+
 ## Automation recipes
 
 - **Batch analyze a folder:** loop `analyze` with `-F video=@file` (serially — each call

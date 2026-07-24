@@ -3,7 +3,7 @@
  * Run: npx tsx scripts/compiler-tests.ts
  */
 import {
-  applyBodyWrap, applySanitizeMap, chooseVideoModel, lintMotionPrompt, lintNbPrompt,
+  applyBodyWrap, applySanitizeMap, chooseVideoModel, ensureCameraPhysics, lintMotionPrompt, lintNbPrompt,
   needsFaceForwardFix, wrapIdentityLock,
 } from '../worker/src/generate/rules';
 import type { ModelProfile } from '../shared/contract';
@@ -93,6 +93,19 @@ const wrappedSd = applyBodyWrap('Enhance the outfit fit. Keep face and backgroun
 check('body wrap appended when missing', wrappedSd.includes('fit hourglass'), wrappedSd);
 check('body wrap idempotent', applyBodyWrap(wrappedSd, bodyProfile) === wrappedSd);
 check('no body section → unchanged', applyBodyWrap('Enhance the outfit fit.', SAV_PROFILE) === 'Enhance the outfit fit.');
+
+// ── camera-physics enforcement ──
+const dnaWithDynamics = {
+  camera: { dynamics: { motionSignature: 'handheld selfie at arm\'s length, constant fine micro-shake, slow lateral sway' } },
+} as unknown as FormatDna;
+const dnaNoDynamics = { camera: {} } as unknown as FormatDna;
+const bare = 'She spins in the kitchen and laughs, morning light through the window.';
+const injected = ensureCameraPhysics(bare, dnaWithDynamics);
+check('physics injected when absent', injected.startsWith('handheld selfie'), injected);
+const hasPhysics = 'Placed camera, static locked-off, she walks into frame and poses.';
+check('physics untouched when present', ensureCameraPhysics(hasPhysics, dnaWithDynamics) === hasPhysics);
+check('no dynamics → unchanged', ensureCameraPhysics(bare, dnaNoDynamics) === bare);
+check('physics injection idempotent', ensureCameraPhysics(injected, dnaWithDynamics) === injected);
 
 // ── sanitize map ──
 const sanitized = applySanitizeMap('she wears lingerie and a bikini, very sexy', SAV_PROFILE);

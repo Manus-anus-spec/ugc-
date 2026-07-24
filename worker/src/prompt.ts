@@ -69,7 +69,7 @@ For every frame fill scene.* with verified observations only:
 - setting: location TYPE not address ("hotel bathroom, marble"), timeOfDay, lighting, keyProps, colorPalette, mood.
 - wardrobeRole: role ("athleisure", "going-out fit", "work uniform"), garments as seen, stylingNotes. NO identity.
 - pacing: totalDurationSec, cutCount, isOneShot, rhythm ("cuts every ~0.8s on beat" / "single slow take"), energy.
-- audio: kind, genre/bpmEstimate/mood for music, voiceoverStyle if spoken, trendingSoundDependent (would this die without the trending sound?), syncNotes ("cuts land on drops").
+- audio: kind, genre/bpmEstimate/mood for music, voiceoverStyle if spoken, trendingSoundDependent (would this die without the trending sound?), lipSync (MANDATORY boolean: does the creator visibly MOUTH the audio on camera — lip-sync a trending sound, speak dialogue, sing? Watch the lips; mouthing drives an entirely different production route), syncNotes ("cuts land on drops").
 - textOverlays: cadence, placement, copyStyle, hookLine, and every overlay item with text/atSec/position/style.
 - script: if there is speech — structure ([HOOK]/[BODY]/[CTA]) and every line with atSec + beatIndex. Omit the field entirely if no speech.
 - contentFlag: AGGRESSIVE detection. rating "nsfw" if ANY of: cleavage, lingerie, sheer fabric, bikini, skirts above mid-thigh, crop tops, tight clothing showing body contour, suggestive positioning, bedroom + revealing clothing, body-focused framing. "borderline" if form-fitting but none of the above. "sfw" ONLY if fully clothed non-revealing + neutral framing. List the exact triggers.
