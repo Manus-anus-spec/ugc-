@@ -3,8 +3,8 @@
  * Run: npx tsx scripts/compiler-tests.ts
  */
 import {
-  applyBodyWrap, applySanitizeMap, chooseVideoModel, ensureCameraPhysics, lintMotionPrompt, lintNbPrompt,
-  needsFaceForwardFix, wrapIdentityLock,
+  applyBodyWrap, applySanitizeMap, chooseVideoModel, ensureAesthetic, ensureCameraPhysics,
+  lintMotionPrompt, lintNbPrompt, needsFaceForwardFix, wrapIdentityLock,
 } from '../worker/src/generate/rules';
 import type { ModelProfile } from '../shared/contract';
 import { SAV_PROFILE, SEED_PROFILES } from '../worker/seeds/profiles';
@@ -44,10 +44,10 @@ check('facing-camera passes', !needsFaceForwardFix(dnaFacing));
 // ── motion lint ──
 const v1 = lintMotionPrompt('She slowly turns, slowly smiles, flash illuminates her face', SAV_PROFILE, 'MULTI_CLIP', 0);
 check('lint catches slowly×2 + flash', v1.some((v) => v.problem.includes('slowly')) && v1.some((v) => v.problem.includes('flash')), JSON.stringify(v1));
-const v2 = lintMotionPrompt('x'.repeat(400), SAV_PROFILE, 'MULTI_CLIP', 0);
-check('lint catches >310 chars (multi)', v2.some((v) => v.problem.includes('310')));
-const v3 = lintMotionPrompt('x'.repeat(400), SAV_PROFILE, 'ONE_SHOT', 0);
-check('one-shot allows 400 chars', !v3.some((v) => v.problem.includes('cap')));
+const v2 = lintMotionPrompt('x'.repeat(600), SAV_PROFILE, 'MULTI_CLIP', 0);
+check('lint catches >550 chars (multi)', v2.some((v) => v.problem.includes('550')));
+const v3 = lintMotionPrompt('x'.repeat(600), SAV_PROFILE, 'ONE_SHOT', 0);
+check('one-shot allows 600 chars', !v3.some((v) => v.problem.includes('cap')));
 const clean = lintMotionPrompt(SAV_PROFILE.toolRules.video.confirmedWorkingExamples[0]!, SAV_PROFILE, 'ONE_SHOT', 0);
 check('confirmed working example passes lint', clean.length === 0, JSON.stringify(clean));
 
@@ -74,10 +74,16 @@ const embedded = lintMotionPrompt(
   SAV_PROFILE, 'MULTI_CLIP', 0, dlg,
 );
 check('embedded dialogue passes', !embedded.some((v) => v.problem.includes('dialogue')), JSON.stringify(embedded));
-const longWithDialogue = lintMotionPrompt(`${'x'.repeat(400)} she says: "${dlg}"`, SAV_PROFILE, 'MULTI_CLIP', 0, dlg);
-check('dialogue beat allows up to 600 chars', !longWithDialogue.some((v) => v.problem.includes('cap')), JSON.stringify(longWithDialogue));
-const longNoDialogue = lintMotionPrompt('x'.repeat(400), SAV_PROFILE, 'MULTI_CLIP', 0);
-check('no-dialogue beat still capped at 310', longNoDialogue.some((v) => v.problem.includes('310')));
+const longWithDialogue = lintMotionPrompt(`${'x'.repeat(600)} she says: "${dlg}"`, SAV_PROFILE, 'MULTI_CLIP', 0, dlg);
+check('dialogue beat allows up to 750 chars', !longWithDialogue.some((v) => v.problem.includes('cap')), JSON.stringify(longWithDialogue));
+const longNoDialogue = lintMotionPrompt('x'.repeat(600), SAV_PROFILE, 'MULTI_CLIP', 0);
+check('no-dialogue beat still capped at 550', longNoDialogue.some((v) => v.problem.includes('550')));
+
+// ── cinematizer lint ──
+const cine = lintMotionPrompt('Handheld iPhone footage, cinematic slow push-in as she turns.', SAV_PROFILE, 'MULTI_CLIP', 0);
+check('positive "cinematic" caught', cine.some((v) => v.problem.includes('cinematizer')), JSON.stringify(cine));
+const negated = lintMotionPrompt('Raw handheld iPhone footage, deep focus — NOT cinematic, no bokeh, she turns and laughs.', SAV_PROFILE, 'MULTI_CLIP', 0);
+check('negated cinematizer words pass', !negated.some((v) => v.problem.includes('cinematizer')), JSON.stringify(negated));
 
 // ── Seedream body wrap ──
 const bodyProfile = {
@@ -93,6 +99,20 @@ const wrappedSd = applyBodyWrap('Enhance the outfit fit. Keep face and backgroun
 check('body wrap appended when missing', wrappedSd.includes('fit hourglass'), wrappedSd);
 check('body wrap idempotent', applyBodyWrap(wrappedSd, bodyProfile) === wrappedSd);
 check('no body section → unchanged', applyBodyWrap('Enhance the outfit fit.', SAV_PROFILE) === 'Enhance the outfit fit.');
+
+// ── footage-aesthetic enforcement ──
+const dnaWithAesthetic = {
+  camera: {},
+  aesthetic: { promptAnchor: 'casual amateur iPhone front-camera vlog footage, raw ungraded look — NOT cinematic' },
+} as unknown as FormatDna;
+const cinematicish = 'She turns from the balcony rail as golden light washes over the scene.';
+const anchored = ensureAesthetic(cinematicish, dnaWithAesthetic);
+check('aesthetic anchor injected when absent', anchored.startsWith('casual amateur iPhone'), anchored);
+const alreadyAmateur = 'Raw amateur iPhone selfie video, she laughs at the counter.';
+check('aesthetic untouched when present', ensureAesthetic(alreadyAmateur, dnaWithAesthetic) === alreadyAmateur);
+const noAesthetic = { camera: {} } as unknown as FormatDna;
+check('no aesthetic in DNA → house default anchor', ensureAesthetic(cinematicish, noAesthetic).startsWith('Raw handheld iPhone footage'));
+check('aesthetic injection idempotent', ensureAesthetic(anchored, dnaWithAesthetic) === anchored);
 
 // ── camera-physics enforcement ──
 const dnaWithDynamics = {

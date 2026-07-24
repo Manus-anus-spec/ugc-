@@ -15,6 +15,8 @@ import {
   CameraSetupSchema,
   ContentRatingSchema,
   EditPlanSchema,
+  FootageAestheticSchema,
+  FootageStyleSchema,
   FormatDnaSchema,
   FormatSummarySchema,
   FormatTypeSchema,
@@ -46,6 +48,8 @@ export type SdFrameType = z.infer<typeof SdFrameTypeSchema>;
 export type CameraSetupKind = z.infer<typeof CameraSetupKindSchema>;
 
 export type FormatType = z.infer<typeof FormatTypeSchema>;
+export type FootageStyle = z.infer<typeof FootageStyleSchema>;
+export type FootageAesthetic = z.infer<typeof FootageAestheticSchema>;
 export type CameraDynamics = z.infer<typeof CameraDynamicsSchema>;
 export type ViralityScorecard = z.infer<typeof ViralityScorecardSchema>;
 export type ViralityForecast = z.infer<typeof ViralityForecastSchema>;

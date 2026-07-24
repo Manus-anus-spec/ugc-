@@ -56,6 +56,32 @@ export const CameraSetupKindSchema = z.enum([
   'self_held_selfie', 'mirror_selfie', 'propped_on_surface', 'third_person', 'camera_put_down',
 ]);
 
+/** Canonical footage-style taxonomy — what KIND of camera content this is. */
+export const FootageStyleSchema = z.enum([
+  'iphone_selfie_vlog',      // front camera, talking/mouthing at arm's length
+  'iphone_third_person_vlog',// friend-filmed rear camera, casual
+  'iphone_skit',             // acted scene, cuts, amateur staging
+  'iphone_candid',           // caught-in-the-moment, no acknowledgment of camera
+  'iphone_mirror',           // mirror content, phone visible
+  'professional',            // actual produced footage — rare in our library
+  'other',
+]);
+
+/**
+ * The LOOK of the footage — device, style, grade. Separate from camera physics:
+ * physics = how the camera MOVES; aesthetic = what the image LOOKS like it was
+ * shot on. Both must survive into motion prompts or video models default to
+ * their cinematic house style ("shot like a movie" — the #1 realism killer).
+ */
+export const FootageAestheticSchema = z.object({
+  device: z.string(),              // "iPhone front camera" | "iPhone rear camera" | "pro mirrorless"
+  style: FootageStyleSchema,
+  grade: z.string(),               // "raw ungraded, auto-exposure, slightly blown window highlights"
+  realismMarkers: z.array(z.string()), // pixel evidence of realness: sensor noise, motion blur, clipped highlights, smudged lens…
+  antiCinematic: z.string(),       // the NOT-line: "no color grade, no cinematic lighting, no shallow depth of field"
+  promptAnchor: z.string(),        // ONE paste-ready phrase locking a video model to this look
+});
+
 /**
  * The handheld PHYSICS of the shot — what makes phone footage feel real.
  * Extracted from pixels so a video model can reproduce the exact camera feel,
@@ -254,6 +280,7 @@ export const FormatDnaSchema = z.object({
     triggers: z.array(z.string()),
   }),
   virality: ViralityScorecardSchema.optional(),  // analyzer MUST fill; optional for pre-v2 rows
+  aesthetic: FootageAestheticSchema.optional(),  // analyzer MUST fill; optional for pre-v2.2 rows
   frames: z.array(FrameSpecSchema), // identity-free frame specs (4-frame rule for one-shots,
                                     // 3/1 per clip for multi-clip — port of worker §13)
   source: SourceMetaSchema,
@@ -277,6 +304,7 @@ export const AnalyzerOutputSchema = FormatDnaSchema.omit({
   // Required for NEW analyses (optional in the stored schema only so pre-v2 rows keep parsing):
   formatType: FormatTypeSchema,
   virality: ViralityScorecardSchema,
+  aesthetic: FootageAestheticSchema,
   camera: CameraSetupSchema.extend({ dynamics: CameraDynamicsSchema }),
 });
 

@@ -31,6 +31,15 @@ Watch the ENTIRE video and determine the filming setup with evidence:
   - motionSignature: distill ALL of the above into ONE video-prompt-ready sentence that reproduces this exact camera feel (e.g. "handheld front-camera at arm's length, constant fine micro-shake with slow lateral sway, step-synced bob while she walks, one quick down-tilt reframe mid-clip"). This sentence ships directly into motion prompts — make it carry everything.
 → fills "camera".
 
+## STEP 1b — FOOTAGE AESTHETIC (fills "aesthetic" — MANDATORY; this is what keeps remakes from looking "shot like a movie")
+Separate from HOW the camera moves: what does the footage LOOK like it was shot on, and in what style?
+- device: read the optical evidence — front-camera wide-angle face distortion, phone-sensor noise in shadows, auto-exposure adaptation, deep focus (phones can't do shallow DOF) → "iPhone front camera" / "iPhone rear camera"; clean shallow-DOF graded footage → "pro camera".
+- style: classify — iphone_selfie_vlog (front cam, talks/mouths at arm's length) | iphone_third_person_vlog (friend-filmed, casual) | iphone_skit (acted scene, amateur staging) | iphone_candid (no camera acknowledgment) | iphone_mirror | professional | other.
+- grade: the actual color/exposure treatment as seen — "raw ungraded, auto-exposure, warm indoor white balance, window highlights slightly blown" — never just "natural".
+- realismMarkers: the pixel evidence that screams REAL — sensor noise in shadows, motion blur on fast moves, blown highlights, autofocus breathing, slightly smudged lens, imperfect framing/headroom, fluorescent flicker. List what you actually see.
+- antiCinematic: the NOT-line for this video — e.g. "no color grade, no cinematic lighting, no shallow depth of field, no smooth gimbal moves, not a film look".
+- promptAnchor: ONE paste-ready phrase that locks a video generator to this exact look, combining device + style + grade + the NOT-line (e.g. "casual amateur iPhone front-camera vlog footage, raw ungraded auto-exposure look, deep focus, slightly imperfect framing — NOT cinematic, no film grade, no shallow depth of field"). This ships verbatim into every motion prompt.
+
 ## STEP 2 — FULL VIDEO SCAN + VERIFICATION DISCIPLINE
 Scrub the entire video before writing anything. Log: fabric shifts and transparency changes, skin detail during movement, background reveals, lighting shifts, hair movement.
 VERIFY, never invent: light sources + color temperature + shadow direction | exact crop boundaries (which body part at each frame edge) + subject fill % + lens distortion | every garment individually with specific color shade + fabric type + fit | wall material + object spatial positions + floor + depth | both hand positions + body orientation in degrees + weight distribution + motion state. If you cannot confirm something from pixels, write "not clearly visible" for that field — NEVER guess.

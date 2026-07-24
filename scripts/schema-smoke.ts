@@ -53,6 +53,13 @@ const fixture = {
   difficulty: { environment: 2, motion: 1, camera: 1, overall: 2, workarounds: [] },
   swapMap: { mustKeep: ['freeze at 0:02', 'propped knee-height angle'], swappable: ['identity', 'outfit color', 'specific elevator'] },
   contentFlag: { rating: 'sfw', triggers: [] },
+  aesthetic: {
+    device: 'iPhone rear camera', style: 'iphone_candid',
+    grade: 'raw ungraded, warm elevator LEDs, auto-exposure',
+    realismMarkers: ['sensor noise in shadow areas', 'slightly blown mirror highlights', 'imperfect headroom'],
+    antiCinematic: 'no color grade, no cinematic lighting, no shallow depth of field',
+    promptAnchor: 'casual amateur iPhone footage propped in an elevator, raw ungraded auto-exposure look, deep focus — NOT cinematic, no film grade',
+  },
   virality: {
     overall: 58, verdict: 'Competent freeze gimmick with no share trigger — average, not viral.',
     dimensions: {

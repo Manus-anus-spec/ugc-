@@ -176,6 +176,23 @@ export function DnaReport({ dna }: { dna: FormatDna }) {
         </div>
       </Section>
 
+      {/* Footage aesthetic — the look that must survive into every remake */}
+      {dna.aesthetic && (
+        <Section title="Footage aesthetic — the look">
+          <div className="flex items-center justify-between mb-1">
+            <KV k="device / style" v={<span className="font-mono">{dna.aesthetic.device} · {dna.aesthetic.style.replaceAll('_', ' ')}</span>} />
+            <CopyButton text={dna.aesthetic.promptAnchor} label="copy anchor" />
+          </div>
+          <KV k="grade" v={dna.aesthetic.grade} />
+          <KV k="realism markers" v={dna.aesthetic.realismMarkers.join(' · ')} />
+          <KV k="never" v={<span className="text-nsfw/90">{dna.aesthetic.antiCinematic}</span>} />
+          <div className="mt-2 bg-raised border border-hairline rounded-lg p-3">
+            <p className="font-mono text-[10px] uppercase tracking-wider text-electric mb-1">prompt anchor — opens every motion prompt</p>
+            <p className="text-sm font-medium">{dna.aesthetic.promptAnchor}</p>
+          </div>
+        </Section>
+      )}
+
       {/* Camera */}
       <Section title="Camera setup">
         <KV k="setup" v={<span className="font-mono">{dna.camera.setup} · {dna.camera.facing}-facing</span>} />

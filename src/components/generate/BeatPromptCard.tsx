@@ -2,8 +2,8 @@ import { useState } from 'react';
 import type { BeatGeneration } from '@shared/contract';
 import { CopyButton } from '../ui';
 
-const CAP_MULTI = 310;
-const CAP_MULTI_DIALOGUE = 600;   // dialogue beats get room — the quote is never truncated
+const CAP_MULTI = 550;            // includes the aesthetic anchor + camera physics + constraint tail
+const CAP_MULTI_DIALOGUE = 750;   // dialogue beats get room — the quote is never truncated
 const CAP_ONE_SHOT = 1200;
 
 type Tool = 'nb' | 'sd' | 'motion';

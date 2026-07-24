@@ -32,8 +32,8 @@ export function needsFaceForwardFix(dna: FormatDna): boolean {
 export interface LintViolation { beatIndex: number; field: string; problem: string }
 
 const SOFT_WORDS = ['subtle', 'gentle', 'soft'];
-export const MOTION_CHAR_CAP_MULTI = 310;
-export const MOTION_CHAR_CAP_MULTI_DIALOGUE = 600;   // the verbatim quote + delivery must fit — never truncate dialogue
+export const MOTION_CHAR_CAP_MULTI = 550;            // anchor (~200) + physics + action + Seedance constraint tail must fit (~80 words ideal)
+export const MOTION_CHAR_CAP_MULTI_DIALOGUE = 750;   // the verbatim quote + delivery must also fit — never truncate dialogue
 export const MOTION_CHAR_CAP_ONE_SHOT = 1200;
 
 export function motionCharCap(videoFormat: 'ONE_SHOT' | 'MULTI_CLIP', hasDialogue: boolean): number {
@@ -62,6 +62,10 @@ export function lintMotionPrompt(
   const cap = motionCharCap(videoFormat, hasDialogue);
   if (prompt.length > cap) v.push({ beatIndex, field: 'motionPrompt', problem: `${prompt.length} chars > ${cap} cap` });
   if (/\b\d{2}[- ]year[- ]old\b/.test(lower)) v.push({ beatIndex, field: 'motionPrompt', problem: 'age reference' });
+  // Cinematizer words flip video models into movie mode — allowed ONLY inside a negation ("NOT cinematic", "no bokeh").
+  const cinematizer = /(?<!not )(?<!no )(?<!non-)\b(cinematic|bokeh|shallow depth of field|film grain|35mm|anamorphic|color[- ]graded|colour[- ]graded|dramatic lighting|golden cinematic|8k|4k hdr|masterpiece)\b/i;
+  const cm = prompt.match(cinematizer);
+  if (cm) v.push({ beatIndex, field: 'motionPrompt', problem: `cinematizer word "${cm[0]}" used as a positive descriptor — kills UGC realism (allowed only inside a NOT/no negation)` });
   if (hasDialogue && !normalize(prompt).includes(normalize(dialogue!))) {
     v.push({ beatIndex, field: 'motionPrompt', problem: 'beat dialogue is missing from motionPrompt — it must be embedded verbatim (self-contained rule)' });
   }
@@ -71,6 +75,24 @@ export function lintMotionPrompt(
 /** Loose-but-safe text normalization for the dialogue-containment check (quotes/whitespace/case drift). */
 function normalize(s: string): string {
   return s.toLowerCase().replace(/[“”"'’‘…]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/** Fallback anchor when a format predates aesthetic extraction — our house look is amateur iPhone.
+ *  Phrasing follows the proven Seedance 2.0 UGC recipe (official guide + curated prompt repo):
+ *  models honor the earliest strong instruction, so this leads every motion prompt. */
+export const DEFAULT_IPHONE_ANCHOR =
+  'Raw handheld iPhone footage, all camera settings automatic, no post-color grading, natural handheld jitter, flat natural lighting, deep focus, imperfect framing — NOT cinematic, no film look, no stabilization';
+
+/** Aesthetic vocabulary a motion prompt must carry so video models don't default to their cinematic house style. */
+const AESTHETIC_TERMS = /(iphone|amateur|vlog|ugc\b|casual .*(footage|video)|home video|phone[- ]camera|webcam|not cinematic|no (film|color|colour) grade|ungraded|raw footage|selfie video|tiktok[- ]style)/i;
+
+/** Guarantee the footage LOOK structurally: motion prompts without any aesthetic anchoring get the
+ *  DNA's promptAnchor (or the house default) prepended — video models read "no style stated" as
+ *  "make it cinematic", which is the #1 realism killer on Seedance/Kling. */
+export function ensureAesthetic(motionPrompt: string, dna: FormatDna): string {
+  if (AESTHETIC_TERMS.test(motionPrompt)) return motionPrompt;
+  const anchor = dna.aesthetic?.promptAnchor?.trim() || DEFAULT_IPHONE_ANCHOR;
+  return `${anchor.replace(/\.$/, '')}. ${motionPrompt.trim()}`;
 }
 
 /** Camera-motion vocabulary a motion prompt must carry to reproduce the source's camera FEEL. */
@@ -172,6 +194,7 @@ export function enforceIdeation(ideation: Ideation, profile: ModelProfile, dna: 
     beat.nbPrompt = wrapIdentityLock(beat.nbPrompt, profile);
     beat.sdPrompt = applyBodyWrap(beat.sdPrompt, profile);
     beat.motionPrompt = ensureCameraPhysics(beat.motionPrompt, dna);
+    beat.motionPrompt = ensureAesthetic(beat.motionPrompt, dna);
     beat.motionPromptCharCount = beat.motionPrompt.length;
     if (!beat.sdPrompt.trim()) {
       violations.push({ beatIndex: beat.clipIndex, field: 'sdPrompt', problem: 'empty — SD pass is mandatory, never skip' });
