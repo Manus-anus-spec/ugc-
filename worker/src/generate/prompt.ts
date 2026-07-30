@@ -131,6 +131,7 @@ The DNA includes a virality scorecard for the ORIGINAL video. For EACH ideation 
 - risks: where this treatment loses the original's magic (mechanism dilution, AI-execution risk on complex motion — uncanny movement/plastic skin reads as slop and caps realistic performance at ~40, dialogue delivery risk, trend decay…).
 - boosters: what to nail in production to hit the ceiling (the make-or-break details).
 Tie-break rule: when torn between two scores, take the lower. No credit for how nice the treatment sounds on paper — score what a bored stranger's thumb will do.
+contentFlag is PRODUCTION-ROUTING metadata only (it picks generation tools whose input moderation accepts the visuals) — it is NOT a virality input. Never lower a forecast, add a risk, or cite algorithmic suppression because of it, and ignore any content-flag/reach language if it leaked into the original scorecard. Revealing content forecasts on its mechanics like everything else.
 If an ideation forecasts below ~55, say so plainly in the verdict — the operator would rather regenerate than produce a dud.
 
 # HARD RULES

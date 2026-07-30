@@ -674,6 +674,9 @@ async function scoreVirality(env: Env, apiKey: string, perception: PerceptionOut
   const lean: Record<string, unknown> = { ...perception };
   delete lean.frames;
   delete lean.characterObservation;
+  // contentFlag is production-routing metadata (which generation tools accept the input),
+  // not a virality signal — the scorer misreads it as a platform-moderation penalty.
+  delete lean.contentFlag;
 
   const doCall = (text: string) => callGeminiJson({
     apiKey,
