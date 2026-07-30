@@ -1,16 +1,31 @@
 /**
  * POST /generate — FormatDNA × ModelProfile → GenerationRun (~3 ideations).
  * Two layers (FABLE5-PLAN §5): deterministic TS frame (rules.ts) around ONE creative
- * Gemini call. /generate REQUIRES profileId — there is no default identity to fall
- * back to, which is what killed the old Naomi→Sav bug.
+ * Gemini call per ideation variant. /generate REQUIRES profileId — there is no default
+ * identity to fall back to, which is what killed the old Naomi→Sav bug.
+ *
+ * CPU-budget architecture (Jul 30): the free plan allows ~10ms CPU per invocation, and
+ * running all three variants' SSE parsing + zod validation + lint enforcement inside
+ * one request tripped Cloudflare 1102 "exceededCpu" live (generation died after ~60s).
+ * The parent /generate now only validates + fans out + assembles; each variant runs as
+ * its OWN invocation via the SELF service binding (POST /generate/variant) with its own
+ * CPU budget. Without the binding (local dev), variants fall back to running inline.
  */
 import { z } from 'zod';
-import { EditPlanSchema, GenerationRunSchema, IdeationSchema, LipSyncPlanSchema, ModelProfileSchema, VariationStrengthSchema, ViralityForecastSchema } from '../../../shared/schemas';
-import type { FormatDna, GenerationRun, ModelProfile } from '../../../shared/contract';
+import {
+  BeatGenerationSchema, CameraAngleSchema, ContinuityLockSchema, CutTransitionSchema,
+  EditPlanSchema, FidelityModeSchema, FirstFrameSourceSchema, GenerationRunSchema, IdeationSchema,
+  LipSyncPlanSchema, ModelProfileSchema, SecondaryMotionSchema, ShotSizeSchema,
+  VariationStrengthSchema, ViralityForecastSchema,
+} from '../../../shared/schemas';
+import type { FidelityMode, FormatDna, GenerationRun, ModelProfile } from '../../../shared/contract';
 import { API_VERSION, type Env } from '../env';
 import { err, json, newId, nowIso } from '../http';
-import { callGeminiJson } from '../gemini';
-import { applySanitizeMap, enforceIdeation, type LintViolation } from '../generate/rules';
+import { callGeminiJson, GeminiQuotaError, geminiKeys, withGeminiKeyFailover } from '../gemini';
+import {
+  applySanitizeMap, applyUniversalSanitize, buildSegmentPlanText, enforceIdeation,
+  hardStripNsfwForLlm, planSegments, type LintViolation,
+} from '../generate/rules';
 import { NEUTRAL_PROFILE } from '../generate/neutral';
 import {
   buildGeneratorInstruction, buildGeneratorRepairPrompt, buildGeneratorUserMessage, buildLintRepairPrompt,
@@ -23,22 +38,71 @@ const RequestSchema = z.object({
   /** Omit for the default character-neutral run; pass a profile id to bind identity (optional layer). */
   profileId: z.string().default('neutral'),
   variationStrength: VariationStrengthSchema.default('close'),
+  /** v3: 'reproduce' (default) transplants the source FILMING 1:1 into the profile's
+   *  world; 'adapt' is the classic reinvent-the-surface ideation. */
+  fidelityMode: FidelityModeSchema.default('reproduce'),
 });
+
+/** Internal per-variant dispatch (SELF binding) — same params plus which variant. */
+const VariantRequestSchema = RequestSchema.extend({
+  variant: z.number().int().min(0).max(IDEATION_COUNT - 1),
+});
+
+/** v3: the generator is ASKED for the filming-fidelity fields (prompt), but the
+ *  schema stays LENIENT — every omission has a deterministic fill in enforceIdeation
+ *  (reproduce pins from the source; adapt gets derived defaults), so a dropped field
+ *  can never 502 a paid run (Jul 26 outage: strict schema + strict lint bricked
+ *  /generate). productionRoute is omitted — built deterministically, never LLM'd. */
+const GeneratedBeatSchema = BeatGenerationSchema.extend({
+  shotSize: ShotSizeSchema.optional(),
+  cameraAngle: CameraAngleSchema.optional(),
+  durationSec: z.number().optional(),
+  cutType: CutTransitionSchema.optional(),
+  motionBeat: z.string().optional(),
+  secondaryMotion: SecondaryMotionSchema.optional(),
+  microExpression: z.string().optional(),
+  startsOnCut: z.boolean().optional(),
+  sourceBeatIndex: z.number().int().optional(),
+  firstFrameSource: FirstFrameSourceSchema.optional(),
+}).omit({ productionRoute: true });
 
 /** What the LLM owns: formula + ideations. Ids/versions/timestamps are ours.
  *  No .min/.max on the array — Gemini's decoder rejects array bounds on large
  *  item schemas (see geminiSafeSchema); the count is enforced below instead. */
 const LlmOutputSchema = z.object({
   formulaExtracted: z.string(),
-  // virality forecast, edit plan, and lip-sync plan are REQUIRED on new runs
-  // (optional in the stored IdeationSchema only so old rows keep parsing)
+  // virality forecast, edit plan, lip-sync plan, continuity lock, and per-beat
+  // filming fields are REQUIRED on new runs (optional in the stored IdeationSchema
+  // only so old rows keep parsing)
   ideations: z.array(IdeationSchema.extend({
     virality: ViralityForecastSchema,
     editPlan: EditPlanSchema,
     lipSyncPlan: LipSyncPlanSchema,
+    continuityLock: ContinuityLockSchema.optional(),   // omission → DNA-derived default (rules.ts)
+    beats: z.array(GeneratedBeatSchema),
   })),
 });
 const LLM_JSON_SCHEMA = z.toJSONSchema(LlmOutputSchema) as Record<string, unknown>;
+
+type LlmIdeation = z.infer<typeof LlmOutputSchema>['ideations'][number];
+type VariantResult = { formula: string; ideation: LlmIdeation };
+
+class InputBlocked extends Error {}
+/** A SELF-dispatched variant failed — carries the child's typed ApiError code. */
+class VariantHttpError extends Error {
+  constructor(message: string, public readonly code: string) { super(message); }
+}
+
+const INPUT_BLOCKED_MESSAGE =
+  "Google's content filter refused this format's DNA even after sanitization (this filter cannot be disabled and fires probabilistically). Try again in a minute, re-analyze the source with tamer wording, or generate from a different format.";
+
+// Diversity across variants comes from explicit per-variant hints — each variant is
+// one Gemini call (a single 3-ideation mega-call streamed 3-6 min and died mid-read).
+const VARIANT_HINTS = [
+  'This run produces VARIANT 1 of 3: take the most natural, highest-probability scenario mapping for this profile (her most-used location + default wardrobe key).',
+  'This run produces VARIANT 2 of 3: take a clearly DIFFERENT location and wardrobe mapping than the most obvious choice — same filming, a different room of her world.',
+  'This run produces VARIANT 3 of 3: take the boldest natural in-world mapping (an unexpected but plausible location/prop pairing) — same filming, maximum freshness.',
+];
 
 function violationsToText(violations: LintViolation[]): string {
   return violations.map((v) => `- ideation beat/clip ${v.beatIndex}, ${v.field}: ${v.problem}`).join('\n');
@@ -49,21 +113,40 @@ export async function generate(req: Request, env: Env, ctx: ExecutionContext): P
   if (!parsed.success) {
     return err('invalid_body', 'body must be { formatId, profileId, variationStrength? }', 400, req, env, parsed.error.issues);
   }
-  const { formatId, profileId, variationStrength } = parsed.data;
+  const { formatId, profileId, variationStrength, fidelityMode } = parsed.data;
   // The whole pipeline runs inside waitUntil: a client disconnect (tab closed,
   // page reloaded) can no longer cancel the invocation and orphan a paid Gemini
   // call — the run still completes and lands in D1, recoverable via history.
-  const work = runGeneration(req, env, formatId, profileId, variationStrength);
+  const work = runGeneration(req, env, formatId, profileId, variationStrength, fidelityMode);
   ctx.waitUntil(work.then(() => undefined, () => undefined));
   return work;
 }
 
-async function runGeneration(
-  req: Request, env: Env, formatId: string, profileId: string,
-  variationStrength: z.infer<typeof VariationStrengthSchema>,
-): Promise<Response> {
+/** POST /generate/variant — internal SELF dispatch: ONE ideation variant in its own
+ *  invocation (own CPU budget). Authed like every route (the parent forwards the
+ *  operator's X-API-Key), so external calls are harmless. */
+export async function generateVariant(req: Request, env: Env): Promise<Response> {
+  const parsed = VariantRequestSchema.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) {
+    return err('invalid_body', 'body must be { formatId, profileId, variationStrength, fidelityMode, variant }', 400, req, env, parsed.error.issues);
+  }
+  const { formatId, profileId, variationStrength, fidelityMode, variant } = parsed.data;
+  const loaded = await loadFormatAndProfile(req, env, formatId, profileId);
+  if (loaded instanceof Response) return loaded;
+  try {
+    const result = await runSingleVariant(env, loaded.dna, loaded.profile, variationStrength, fidelityMode, variant);
+    return json(result, 200, req, env);
+  } catch (e) {
+    if (e instanceof InputBlocked) return err('gemini_input_blocked', INPUT_BLOCKED_MESSAGE, 502, req, env);
+    throw e;   // GeminiQuotaError → typed 503 in index.ts; anything else → 500 internal
+  }
+}
 
-  // ── Load format + profile ──
+type Loaded = { dna: FormatDna; profile: ModelProfile; formatVersion: number };
+
+async function loadFormatAndProfile(
+  req: Request, env: Env, formatId: string, profileId: string,
+): Promise<Loaded | Response> {
   const formatRow = await env.DB.prepare('SELECT dna, current_version, schema_version FROM formats WHERE id = ?')
     .bind(formatId).first<{ dna: string; current_version: number; schema_version: string }>();
   if (!formatRow) return err('not_found', `format ${formatId} not found`, 404, req, env);
@@ -79,52 +162,190 @@ async function runGeneration(
     if (!profileRow) return err('not_found', `profile ${profileId} not found`, 404, req, env);
     profile = ModelProfileSchema.parse(JSON.parse(profileRow.profile)) as ModelProfile;
   }
-  const dna = JSON.parse(formatRow.dna) as FormatDna;
+  return { dna: JSON.parse(formatRow.dna) as FormatDna, profile, formatVersion: formatRow.current_version };
+}
 
-  // ── Layer 1 (pre): sanitize the LLM input; stored DNA keeps raw observations ──
-  const dnaForLlm = applySanitizeMap(JSON.stringify(dna, null, 1), profile);
-  const systemInstruction = buildGeneratorInstruction(profile, variationStrength, IDEATION_COUNT);
-  const userMessage = buildGeneratorUserMessage(dnaForLlm, JSON.stringify(profile, null, 1));
+/** One ideation variant: sanitize inputs, one creative call (with input-block
+ *  escalation + key failover), one schema repair, deterministic enforcement + one
+ *  targeted rewrite. Throws InputBlocked / GeminiQuotaError / Error. */
+async function runSingleVariant(
+  env: Env, dna: FormatDna, profile: ModelProfile,
+  variationStrength: z.infer<typeof VariationStrengthSchema>,
+  fidelityMode: FidelityMode, variant: number,
+): Promise<VariantResult> {
+  // ── Layer 1 (pre): sanitize the LLM input; stored DNA keeps raw observations.
+  // Universal map runs AFTER the profile map as the safety net — Gemini's input
+  // filter (PROHIBITED_CONTENT) is not disableable and trips on raw observations.
+  const dnaForLlm = applyUniversalSanitize(applySanitizeMap(JSON.stringify(dna, null, 1), profile));
+  // The profile ships WITHOUT its enforcement config: contentPolicy.sanitizeMap is
+  // literally a list of NSFW words and strippedDescriptors is identity regexes —
+  // both are server-side machinery the LLM never needs, and both feed the filter.
+  const profileForLlm = {
+    ...profile,
+    contentPolicy: undefined,
+    identityLock: { ...profile.identityLock, strippedDescriptors: [] },
+  };
+  const profileJson = applyUniversalSanitize(JSON.stringify(profileForLlm, null, 1));
+  const userMessage = buildGeneratorUserMessage(dnaForLlm, profileJson);
+  const hardDnaJson = applyUniversalSanitize(
+    applySanitizeMap(JSON.stringify(hardStripNsfwForLlm(dna), null, 1), profile),
+  );
+  const hardUserMessage = buildGeneratorUserMessage(hardDnaJson, profileJson);
 
-  const call = (text: string) => callGeminiJson({
-    apiKey: env.GEMINI_API_KEY,
-    model: env.GEMINI_MODEL,
+  // v3.3: precompute the segment plan — the LLM follows it, never invents grouping.
+  const segments = fidelityMode === 'reproduce' ? planSegments(dna.beats) : null;
+  const segmentPlan = segments ? buildSegmentPlanText(dna.beats, segments) : undefined;
+  const unitCount = segments ? segments.length : dna.beats.length;
+
+  // Text-only calls: free to fail over to the fallback key when the primary
+  // project's spend cap is exhausted. Repairs stick to whichever key succeeded.
+  let activeKey = env.GEMINI_API_KEY;
+
+  const isInputBlock = (e: unknown): boolean =>
+    e instanceof Error && /blocked the input/i.test(e.message);
+
+  const systemInstruction =
+    `${buildGeneratorInstruction(profile, variationStrength, 1, fidelityMode, unitCount, segmentPlan)}\n\n# VARIANT DIRECTIVE\n${VARIANT_HINTS[variant]}`;
+  const call = (text: string, model = env.GEMINI_MODEL) => callGeminiJson({
+    apiKey: activeKey,
+    model,
     systemInstruction,
     parts: [{ text }],
     jsonSchema: LLM_JSON_SCHEMA,
     temperature: 0.7,   // creative fill — matches the old generator's temperature
   });
 
-  // ── Layer 2: one creative call, one schema-guided repair ──
-  let raw = (await call(userMessage)).text;
+  // Input-block escalation: sanitized payload → hard-strip payload → hard-strip on
+  // the fallback model (filter behavior differs per model). Blocks cost no tokens.
+  const attempts: Array<() => Promise<string>> = [
+    async () => (await withGeminiKeyFailover(geminiKeys(env), (k) => {
+      activeKey = k;
+      return call(userMessage);
+    })).text,
+    async () => (await call(hardUserMessage)).text,
+    ...(env.GEMINI_MODEL_FALLBACK && env.GEMINI_MODEL_FALLBACK !== env.GEMINI_MODEL
+      ? [async () => (await call(hardUserMessage, env.GEMINI_MODEL_FALLBACK)).text]
+      : []),
+  ];
+  let raw: string | null = null;
+  for (const attempt of attempts) {
+    try {
+      raw = await attempt();
+      break;
+    } catch (e) {
+      if (!isInputBlock(e)) throw e;
+      console.warn(`variant ${variant}: input blocked — escalating sanitization tier`);
+    }
+  }
+  if (raw === null) throw new InputBlocked();
+
+  // Repair calls embed the model's own output, which can itself trip the filter —
+  // always sanitize what goes back in.
+  const repairCall = async (text: string): Promise<string> => {
+    try {
+      return (await call(applyUniversalSanitize(text))).text;
+    } catch (e) {
+      if (isInputBlock(e)) throw new InputBlocked();
+      throw e;
+    }
+  };
+
   let output = LlmOutputSchema.safeParse(tryParse(raw));
   if (!output.success) {
-    raw = (await call(buildGeneratorRepairPrompt(zodText(output.error), raw))).text;
+    raw = await repairCall(buildGeneratorRepairPrompt(zodText(output.error), raw));
     output = LlmOutputSchema.safeParse(tryParse(raw));
     if (!output.success) {
-      return err('generation_invalid', 'generator output failed schema validation after one repair attempt', 502, req, env,
-        output.error.issues.slice(0, 20));
+      throw new Error(`variant ${variant}: output failed schema validation after one repair: ${zodText(output.error).slice(0, 400)}`);
     }
   }
+  const ideation = output.data.ideations[0];
+  if (!ideation) throw new Error(`variant ${variant}: generator returned no ideation`);
 
-  if (output.data.ideations.length < 2) {
-    return err('generation_invalid', `generator returned ${output.data.ideations.length} ideation(s), need ${IDEATION_COUNT}`, 502, req, env);
-  }
-
-  // ── Layer 1 (post): enforce every deterministic rule; one targeted rewrite, then hard-fail ──
-  let violations = output.data.ideations.flatMap((i) => enforceIdeation(i, profile, dna));
+  // Deterministic enforcement + ONE targeted rewrite, scoped to THIS ideation only.
+  let violations = enforceIdeation(ideation, profile, dna, fidelityMode);
   if (violations.length > 0) {
-    raw = (await call(buildLintRepairPrompt(violationsToText(violations), JSON.stringify(output.data)))).text;
-    const repaired = LlmOutputSchema.safeParse(tryParse(raw));
-    if (repaired.success) {
-      output = repaired;
-      violations = output.data.ideations.flatMap((i) => enforceIdeation(i, profile, dna));
+    try {
+      const rewritten = await repairCall(buildLintRepairPrompt(
+        violationsToText(violations),
+        JSON.stringify({ formulaExtracted: output.data.formulaExtracted, ideations: [ideation] }),
+      ));
+      const reparsed = LlmOutputSchema.safeParse(tryParse(rewritten));
+      if (reparsed.success && reparsed.data.ideations[0]) {
+        const fixed = reparsed.data.ideations[0];
+        const remaining = enforceIdeation(fixed, profile, dna, fidelityMode);
+        if (remaining.length === 0) return { formula: output.data.formulaExtracted, ideation: fixed };
+        violations = remaining;
+      }
+    } catch (e) {
+      if (!(e instanceof InputBlocked)) throw e;   // blocked rewrite: fall through to hard-fail below
     }
+    throw new Error(`variant ${variant}: lint violations survived one rewrite: ${violationsToText(violations).slice(0, 400)}`);
   }
-  if (violations.length > 0) {
-    return err('lint_failed', 'generated prompts violate hard production rules after one rewrite attempt — nothing was saved', 502, req, env,
-      violations.slice(0, 30));
+  return { formula: output.data.formulaExtracted, ideation };
+}
+
+async function runGeneration(
+  req: Request, env: Env, formatId: string, profileId: string,
+  variationStrength: z.infer<typeof VariationStrengthSchema>,
+  fidelityMode: FidelityMode,
+): Promise<Response> {
+
+  // ── Load + validate up front (cheap): 404/422 before any variant is dispatched ──
+  const loaded = await loadFormatAndProfile(req, env, formatId, profileId);
+  if (loaded instanceof Response) return loaded;
+  const { dna, profile, formatVersion } = loaded;
+
+  // ── Layer 2: one call per ideation, run in PARALLEL — each in its OWN invocation
+  // via the SELF binding (own CPU budget; see header comment). Inline fallback keeps
+  // `wrangler dev` working without the binding.
+  const dispatchVariant = async (variant: number): Promise<VariantResult> => {
+    if (!env.SELF) return runSingleVariant(env, dna, profile, variationStrength, fidelityMode, variant);
+    const res = await env.SELF.fetch('https://ugc-api.internal/generate/variant', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': req.headers.get('X-API-Key') ?? '',
+      },
+      body: JSON.stringify({ formatId, profileId, variationStrength, fidelityMode, variant }),
+    });
+    const body = await res.json().catch(() => null) as
+      | (VariantResult & { error?: undefined; code?: undefined })
+      | { error: string; code: string } | null;
+    if (res.ok && body && 'ideation' in body && body.ideation) {
+      return { formula: body.formula, ideation: body.ideation };
+    }
+    throw new VariantHttpError(
+      body?.error ?? `variant ${variant} dispatch failed (HTTP ${res.status})`,
+      body?.code ?? 'internal',
+    );
+  };
+
+  const settled = await Promise.allSettled([0, 1, 2].map((v) => dispatchVariant(v)));
+  const good = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []));
+  const failures = settled.flatMap((s) => (s.status === 'rejected' ? [s.reason] : []));
+  const failureCode = (f: unknown): string | null =>
+    f instanceof VariantHttpError ? f.code
+      : f instanceof InputBlocked ? 'gemini_input_blocked'
+        : f instanceof GeminiQuotaError ? (f.kind === 'spend_cap' ? 'gemini_billing_cap' : 'gemini_rate_limited')
+          : null;
+  if (good.length < 2) {
+    if (failures.length && failures.every((f) => failureCode(f) === 'gemini_input_blocked')) {
+      return err('gemini_input_blocked', INPUT_BLOCKED_MESSAGE, 502, req, env);
+    }
+    // Operational quota failures deserve their typed surface, not a generic 502.
+    const quota = failures.find((f) => failureCode(f) === 'gemini_billing_cap' || failureCode(f) === 'gemini_rate_limited');
+    if (quota) {
+      return err(failureCode(quota)!, quota instanceof Error ? quota.message : String(quota), 503, req, env);
+    }
+    return err('generation_invalid',
+      `only ${good.length}/${IDEATION_COUNT} ideation variants survived (need ≥2) — retry, this is usually transient`,
+      502, req, env,
+      failures.map((f) => (f instanceof Error ? f.message.slice(0, 300) : String(f))).slice(0, 6));
   }
+  if (good.length < IDEATION_COUNT) {
+    console.warn(`generate: proceeding with ${good.length}/${IDEATION_COUNT} ideations (failed: ${failures.map((f) => f instanceof Error ? f.message.slice(0, 120) : f).join(' | ')})`);
+  }
+  const output = { data: { formulaExtracted: good[0]!.formula, ideations: good.map((g) => g.ideation) } };
 
   // ── Assemble + persist ──
   const now = nowIso();
@@ -132,17 +353,17 @@ async function runGeneration(
     schemaVersion: 1,
     id: newId(),
     formatId,
-    formatVersion: formatRow.current_version,
+    formatVersion,
     profileId,
     profileVersion: profile.version,
     variationStrength,
+    fidelityMode,
     formulaExtracted: output.data.formulaExtracted,
     ideations: output.data.ideations.map((i, idx) => ({ ...i, index: idx })),
     createdAt: now,
     generatorVersion: `${API_VERSION}/${env.GEMINI_MODEL}`,
   };
   GenerationRunSchema.parse(run);   // belt-and-braces before persisting
-
   await env.DB.prepare(
     `INSERT INTO generations (id, format_id, format_version, profile_id, profile_version,
        variation_strength, status, output, created_at) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)`

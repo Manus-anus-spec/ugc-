@@ -27,6 +27,34 @@ export const SdFrameTypeSchema = z.enum([
   'FULL_FRONT', 'FULL_SIDE', 'BACK', 'UPPER_BODY', 'HEAD_SHOULDERS', 'UNIFORM', 'CONFINED',
 ]);
 
+// ── Filming-fidelity primitives (v3 "reproduce the filming" upgrade) ──
+export const ShotSizeSchema = z.enum(['ECU', 'CU', 'MS', 'WS']);
+/** aroll = the subject carries the shot; broll = a CUTAWAY insert (hands-only,
+ *  food/product close-up, environment detail) — the pacing tool of real UGC, and
+ *  cheaper for us to produce: no face, no identity lock, no body pass. */
+export const ShotTypeSchema = z.enum(['aroll', 'broll']);
+export const CameraAngleSchema = z.enum(['eye', 'low', 'high', 'overhead', 'pov']);
+export const CutTransitionSchema = z.enum(['hard', 'match', 'whip', 'jump']);
+export const FidelityModeSchema = z.enum(['reproduce', 'adapt']);
+export const FirstFrameSourceSchema = z.enum(['hero_still', 'prev_clip_last_frame', 'fresh_nb']);
+
+/** Reproducible camera-real "tells", constrained so each maps to a canned NB token +
+ *  a canned motion token in rules.ts (REALISM_TELL_TOKENS). Free-form markers stay in
+ *  aesthetic.realismMarkers for description; THESE drive deterministic injection. */
+export const RealismTellSchema = z.enum([
+  'sensor-noise-in-shadows', 'motion-blur-on-fast-moves', 'blown-highlights',
+  'autofocus-breathing', 'imperfect-headroom', 'fluorescent-flicker', 'rolling-shutter',
+]);
+
+/** What moves BESIDES the subject's primary action — hair/fabric/soft-tissue/jewelry
+ *  inertia. Its absence is the loudest fixable AI-motion tell in generated video. */
+export const SecondaryMotionSchema = z.object({
+  hair: z.string(),          // "hair swings forward as she leans, settles over ~0.5s" | "tied back, static"
+  fabric: z.string(),        // "apron ripples with each arm move" | "rigid denim, minimal"
+  softBody: z.string(),      // natural soft-tissue inertia on action beats, as observed
+  accessories: z.string(),   // "hoop earrings swing on the head turn" | "none"
+});
+
 /** Canonical format taxonomy — the filterable library axis (free-form archetype stays as flavor). */
 export const FormatTypeSchema = z.enum([
   'talking_head', 'skit', 'pov', 'grwm', 'transformation', 'outfit_showcase',
@@ -47,6 +75,11 @@ export const SourceMetaSchema = z.object({
   originalHandle: z.string().optional(),
   analyzedAt: z.string(),           // ISO timestamp
   analyzerVersion: z.string(),      // e.g. "ugc-api@1.0.0/gemini-3-pro-preview"
+  /** v3 honesty stamps: the fps the video was actually sampled at (every timing field
+   *  is only as precise as this grid) + how much to trust the timings (drops to 'low'
+   *  when Gemini ignored our fps request or the numeric gate needed a forced repair). */
+  samplingFps: z.number().optional(),
+  timingConfidence: z.enum(['high', 'medium', 'low']).optional(),
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -80,6 +113,12 @@ export const FootageAestheticSchema = z.object({
   realismMarkers: z.array(z.string()), // pixel evidence of realness: sensor noise, motion blur, clipped highlights, smudged lens…
   antiCinematic: z.string(),       // the NOT-line: "no color grade, no cinematic lighting, no shallow depth of field"
   promptAnchor: z.string(),        // ONE paste-ready phrase locking a video model to this look
+  // v3 filming-fidelity additions — optional so pre-v3 rows keep parsing:
+  colorTempK: z.string().optional(),        // CATEGORICAL, evidence-bound: "warm indoor ~3000K" — never invented precision
+  lightingDirection: z.string().optional(), // "key from window camera-left, soft ceiling fill, shadows fall right"
+  practicals: z.array(z.string()).optional(),   // visible in-frame light sources: "fridge interior light", "TV glow"
+  realismTells: z.array(RealismTellSchema).optional(),  // constrained tells → canned NB/motion tokens (rules.ts)
+  promptAnchorShort: z.string().optional(), // ~90-char compression of promptAnchor for char-tight motion prompts
 });
 
 /**
@@ -167,6 +206,18 @@ export const BeatSchema = z.object({
   dialogue: z.string().optional(),
   onScreenText: z.string().optional(),
   startsOnCut: z.boolean(),
+  // v3 filming fidelity — optional so pre-v3 rows keep parsing; REQUIRED on new
+  // analyses via AnalyzerBeatSchema (the pre-v2 optional pattern):
+  shotSize: ShotSizeSchema.optional(),
+  cameraAngle: CameraAngleSchema.optional(),
+  lensFeel: z.string().optional(),          // "front-cam wide, mild face distortion at arm's length"
+  cutTransition: CutTransitionSchema.optional(),  // how this beat ENTERS at startSec
+  motionBeat: z.string().optional(),        // THE appeal-carrying motion of the beat ("chest bounces as she laughs")
+  secondaryMotion: SecondaryMotionSchema.optional(),
+  microExpression: z.string().optional(),   // blink / gaze dart / breath / weight shift actually observed
+  shotType: ShotTypeSchema.optional(),      // aroll | broll — B-roll cutaways drive pacing/tension
+  brollSubject: z.string().optional(),      // broll only: WHAT the insert shows ("hands rolling husks tight, steam rising")
+  sourceBeatIndex: z.number().int().optional(),   // provenance when derived from another beat (micro-pass merges)
 });
 
 export const FrameSpecSchema = z.object({
@@ -191,6 +242,53 @@ export const FrameSpecSchema = z.object({
     fabric: z.string(),             // texture/behavior/finish
     nsfwElements: z.array(z.string()),  // raw observations; sanitization happens at generation
   }),
+});
+
+// ── Pacing + audio (named so AnalyzerOutputSchema can require the v3 additions) ──
+export const PacingSchema = z.object({
+  totalDurationSec: z.number(),
+  cutCount: z.number().int(),
+  isOneShot: z.boolean(),
+  rhythm: z.string(),             // "cuts every ~0.8s on beat" | "single slow take"
+  energy: z.string(),
+  // v3 — optional for pre-v3 rows:
+  cutCadenceSec: z.number().optional(),   // MEDIAN seconds between cuts (numeric twin of rhythm)
+  payoffSec: z.number().optional(),       // when the hook's promised payoff actually lands
+});
+
+export const AudioBeatMapEntrySchema = z.object({
+  atSec: z.number(),
+  kind: z.enum(['downbeat', 'drop', 'accent']),
+});
+
+export const AudioDnaSchema = z.object({
+  kind: z.enum(['trending_audio', 'voiceover', 'ambient', 'silent_text_overlay', 'original_dialogue']),
+  genre: z.string().optional(),
+  bpmEstimate: z.number().optional(),
+  mood: z.string().optional(),
+  voiceoverStyle: z.string().optional(),
+  trendingSoundDependent: z.boolean(),
+  lipSync: z.boolean().optional(),   // does the creator MOUTH the audio on camera? (drives the lip-sync route)
+  syncNotes: z.string().optional(),  // "cuts land on drops"
+  // v3 — optional for pre-v3 rows:
+  beatMap: z.array(AudioBeatMapEntrySchema).optional(),  // timestamped musical events the cut map references
+  syncType: z.enum(['cut_on_beat', 'motion_on_beat', 'none']).optional(),
+  roomTone: z.string().optional(),   // ambient signature: "kitchen hum + faint street noise"
+});
+
+/** Does the video loop, and how — replay mechanics are generation-relevant. */
+export const LoopSchema = z.object({
+  isSeamless: z.boolean(),
+  loopPointSec: z.number().optional(),   // where the end hands back to the start
+  mechanism: z.string(),                 // "last pose matches opening pose" | "audio phrase wraps" | "none"
+});
+
+/** How the footage FEELS temporally — what a video model must reproduce to avoid the AI-smooth look. */
+export const MotionCadenceSchema = z.object({
+  fpsFeel: z.string(),               // "native 30fps phone" | "24fps-ish with judder"
+  shutterFeel: z.string(),           // "normal auto shutter, motion blur on fast moves"
+  temporalArtifacts: z.string(),     // "rolling shutter wobble on whip pans" | "none seen"
+  interpolationRisk: z.string(),     // what would betray AI here: "any frame-interpolated smoothness on the hair flip"
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -220,23 +318,10 @@ export const FormatDnaSchema = z.object({
     garments: z.array(z.string()),
     stylingNotes: z.string(),
   }),
-  pacing: z.object({
-    totalDurationSec: z.number(),
-    cutCount: z.number().int(),
-    isOneShot: z.boolean(),
-    rhythm: z.string(),             // "cuts every ~0.8s on beat" | "single slow take"
-    energy: z.string(),
-  }),
-  audio: z.object({
-    kind: z.enum(['trending_audio', 'voiceover', 'ambient', 'silent_text_overlay', 'original_dialogue']),
-    genre: z.string().optional(),
-    bpmEstimate: z.number().optional(),
-    mood: z.string().optional(),
-    voiceoverStyle: z.string().optional(),
-    trendingSoundDependent: z.boolean(),
-    lipSync: z.boolean().optional(),   // does the creator MOUTH the audio on camera? (drives the lip-sync route)
-    syncNotes: z.string().optional(),  // "cuts land on drops"
-  }),
+  pacing: PacingSchema,
+  audio: AudioDnaSchema,
+  loop: LoopSchema.optional(),                 // v3 — analyzer MUST fill; optional for pre-v3 rows
+  motionCadence: MotionCadenceSchema.optional(),  // v3 — analyzer MUST fill; optional for pre-v3 rows
   textOverlays: z.object({
     present: z.boolean(),
     cadence: z.string(),
@@ -298,14 +383,64 @@ export const FormatDnaSchema = z.object({
  * (id, version, schemaVersion, source). Derived — never drifts from FormatDnaSchema.
  * Phase 2 feeds z.toJSONSchema(AnalyzerOutputSchema) to Gemini as the responseSchema.
  */
+/** v3: a NEW analysis must fill every filming-fidelity field on every beat. */
+export const AnalyzerBeatSchema = BeatSchema.extend({
+  shotSize: ShotSizeSchema,
+  cameraAngle: CameraAngleSchema,
+  lensFeel: z.string(),
+  cutTransition: CutTransitionSchema,
+  motionBeat: z.string(),
+  secondaryMotion: SecondaryMotionSchema,
+  microExpression: z.string(),
+  shotType: ShotTypeSchema,
+});
+
 export const AnalyzerOutputSchema = FormatDnaSchema.omit({
   schemaVersion: true, id: true, version: true, source: true,
 }).extend({
-  // Required for NEW analyses (optional in the stored schema only so pre-v2 rows keep parsing):
+  // Required for NEW analyses (optional in the stored schema only so pre-v2/v3 rows keep parsing):
   formatType: FormatTypeSchema,
   virality: ViralityScorecardSchema,
-  aesthetic: FootageAestheticSchema,
+  aesthetic: FootageAestheticSchema.extend({
+    colorTempK: z.string(),
+    lightingDirection: z.string(),
+    practicals: z.array(z.string()),
+    realismTells: z.array(RealismTellSchema),
+    promptAnchorShort: z.string(),
+  }),
   camera: CameraSetupSchema.extend({ dynamics: CameraDynamicsSchema }),
+  beats: z.array(AnalyzerBeatSchema),
+  pacing: PacingSchema.extend({ cutCadenceSec: z.number(), payoffSec: z.number() }),
+  audio: AudioDnaSchema.extend({
+    beatMap: z.array(AudioBeatMapEntrySchema),
+    syncType: z.enum(['cut_on_beat', 'motion_on_beat', 'none']),
+    roomTone: z.string(),
+  }),
+  loop: LoopSchema,
+  motionCadence: MotionCadenceSchema,
+});
+
+/**
+ * v3 SPEND SPLIT: the perception call returns everything EXCEPT the virality essay,
+ * which runs as a separate TEXT-ONLY call on the fast model over the extracted DNA
+ * (never re-grounds Pro over the whole clip — see gemini.ts SPEND_CAP_FIX history).
+ */
+export const PerceptionOutputSchema = AnalyzerOutputSchema.omit({ virality: true });
+
+/** Pass A (boundary+motion map): the ONLY thing the fast high-fps scan returns. */
+export const BoundaryMapSchema = z.object({
+  cutTimestamps: z.array(z.number()),      // seconds, on the sampling-fps grid
+  motionBeatWindows: z.array(z.object({ startSec: z.number(), endSec: z.number() })),
+});
+
+/** Micro-pass output: sub-second body motion inside one motion window. */
+export const MotionWindowDetailSchema = z.object({
+  windows: z.array(z.object({
+    startSec: z.number(),
+    endSec: z.number(),
+    motionBeat: z.string(),
+    secondaryMotion: SecondaryMotionSchema,
+  })),
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -391,6 +526,17 @@ export const ModelProfileSchema = z.object({
 // GENERATION — per (format, profile). IDEATION, not clone (brief §4g).
 // A run returns ~3 distinct ideations; the operator picks the winner.
 // ─────────────────────────────────────────────────────────────
+/** One step of the machine-readable production graph for a beat:
+ *  NB → SD → face-restore → video → (lipsync). face_restore is an explicit node —
+ *  the documented SD face-drift fix, never an implied side step. */
+export const ProductionRouteStepSchema = z.object({
+  step: z.number().int(),           // 1-based order
+  tool: z.enum(['nano_banana_2', 'seedream_4.5', 'face_restore', 'kling_3', 'cdance_2', 'lipsync']),
+  inputAsset: z.string(),           // "hero still from beat 0" | "prev clip last frame" | "SD output"
+  outputAsset: z.string(),          // what this step produces, named so later steps can reference it
+  promptField: z.string(),          // which BeatGeneration field feeds it: "nbPrompt" | "sdPrompt" | "motionPrompt" | "none"
+});
+
 export const BeatGenerationSchema = z.object({
   clipIndex: z.number().int(),
   sourceFrameId: z.string().optional(),  // FormatDNA.frames inspiration, if any — beats are
@@ -406,21 +552,84 @@ export const BeatGenerationSchema = z.object({
   sdFrameType: SdFrameTypeSchema,
   motionPrompt: z.string(),         // Kling/CDance clip prompt
   motionPromptCharCount: z.number().int(),  // enforced ≤310/clip (multi) or 800-1200 (one-shot Kling)
+  // v3 filming fidelity — optional so stored pre-v3 runs keep parsing; REQUIRED on
+  // new runs via the generator output schema (routes/generate.ts):
+  shotSize: ShotSizeSchema.optional(),
+  cameraAngle: CameraAngleSchema.optional(),
+  durationSec: z.number().optional(),
+  cutType: CutTransitionSchema.optional(),      // how this clip ENTERS in the edit
+  motionBeat: z.string().optional(),            // the appeal-carrying motion this clip must contain
+  secondaryMotion: SecondaryMotionSchema.optional(),
+  microExpression: z.string().optional(),
+  startsOnCut: z.boolean().optional(),
+  shotType: ShotTypeSchema.optional(),          // broll beats skip identity lock / SD pass / face QA
+  brollSubject: z.string().optional(),
+  sourceBeatIndex: z.number().int().optional(), // which dna.beats[i] this reproduces (first covered beat)
+  /** v3.3 SEGMENTS: sub-4s source beats are grouped into ONE continuous-take
+   *  generation (video models can't generate below ~5s; real creators shoot one
+   *  take and chop it). These are ALL the source beats this generation covers —
+   *  the motionPrompt carries their internal timeline; editPlan slices[] cuts
+   *  the take back into the source cadence. */
+  sourceBeatIndices: z.array(z.number().int()).optional(),
+  firstFrameSource: FirstFrameSourceSchema.optional(),  // hero_still | prev_clip_last_frame | fresh_nb
+  productionRoute: z.array(ProductionRouteStepSchema).optional(),
 });
 
 /**
  * How to physically assemble the final video from the generated clips —
  * the editing structure the operator follows in CapCut/Canva.
  */
+/** THE TRIM MAP — how sub-second cut cadence gets reproduced when video models can't
+ *  generate below ~5s (Kling floor): generate LONG, slice to cadence ON THE BEAT in edit. */
+export const TrimSpecSchema = z.object({
+  generatedDurationSec: z.number(), // what to actually generate (≥5s for Kling)
+  useInSec: z.number(),             // slice window inside the generated clip…
+  useOutSec: z.number(),
+  cutOnBeatAtSec: z.number().optional(),  // final-timeline position of the outgoing cut (audio.beatMap ref)
+  landsOnBeat: z.boolean(),
+});
+
+/** Phone-ify the export — the last mile that makes an AI clip read as camera footage. */
+export const PostProcessingSchema = z.object({
+  fps: z.number(),                  // 30 — phone native; never leave a model's 24/25 default
+  addGrain: z.string(),             // "fine sensor grain, stronger in shadows" | "none — source already noisy"
+  addHandheldShake: z.string(),     // "2-4px micro-shake overlay on locked shots" | "none — already handheld"
+  rollingShutterOnPans: z.boolean(),
+  motionBlurAmount: z.string(),     // "natural 180° shutter feel on fast moves"
+  reencodeProfile: z.string(),      // "phone-HEVC"
+  aspect: z.string(),               // "9:16 phone crop"
+});
+
 export const EditPlanSchema = z.object({
   clips: z.array(z.object({
     clipIndex: z.number().int(),
     durationSec: z.number(),
     purpose: z.string(),            // "hook — freeze on the stare", "payoff reveal"
     transitionOut: z.string(),      // "hard cut on beat" | "none (last clip)"
+    // v3 — optional for stored pre-v3 runs:
+    beatMapIndex: z.number().int().optional(),  // which audio.beatMap event the outgoing cut lands on
+    trim: TrimSpecSchema.optional(),
+    /** v3.3: when one generated take covers SEVERAL source beats, each slice is one
+     *  cut chopped from it (jump-cut technique). trim stays = slices[0] for compat. */
+    slices: z.array(TrimSpecSchema).optional(),
   })),
   assembly: z.array(z.string()),    // ordered edit steps incl. caption/text-overlay placement
   captionsNote: z.string().optional(),
+  // v3 — optional for stored pre-v3 runs:
+  loopPlan: z.string().optional(),  // how the edit closes the loop ("end on the opening pose, hard cut to 0:00")
+  postProcessing: PostProcessingSchema.optional(),
+});
+
+/** Generated ONCE per ideation, inherited by every beat — cross-shot continuity is
+ *  the #1 "AI" tell in stitched multi-clip video. */
+export const ContinuityLockSchema = z.object({
+  setDescription: z.string(),       // the ONE set, concrete: "small sunlit farmhouse kitchen, butcher-block counters"
+  wardrobeExact: z.string(),        // exact garments incl. colors — identical in every beat
+  hairExact: z.string(),            // exact style + state
+  lightingExact: z.string(),        // sources + direction + behavior, held constant
+  colorTempK: z.string(),           // categorical: "warm indoor ~3000K"
+  timeOfDay: z.string(),
+  keyProps: z.array(z.string()),    // props that must persist across clips
 });
 
 /**
@@ -469,6 +678,7 @@ export const IdeationSchema = z.object({
     videoChecks: z.array(z.string()),
   }),
   virality: ViralityForecastSchema.optional(),  // required for new runs (generator schema); optional for old rows
+  continuityLock: ContinuityLockSchema.optional(),  // v3 — required for new runs; optional for old rows
   status: GenerationStatusSchema,
 });
 
@@ -481,10 +691,31 @@ export const GenerationRunSchema = z.object({
   profileId: z.string(),
   profileVersion: z.number().int(),
   variationStrength: VariationStrengthSchema,  // close-but-fresh (default) → bold
+  fidelityMode: FidelityModeSchema.optional(),  // v3 — 'reproduce' (default) | 'adapt'; optional for old rows
   formulaExtracted: z.string(),     // the format's formula, shared across ideations
   ideations: z.array(IdeationSchema),
   createdAt: z.string(),
   generatorVersion: z.string(),
+});
+
+// ─────────────────────────────────────────────────────────────
+// QA LOOPBACK (Part H) — the render-inspection verdict for a generated still/clip.
+// Optional/hero-only (each check is a paid Pro vision call).
+// ─────────────────────────────────────────────────────────────
+export const QaVerdictSchema = z.object({
+  readsAsAI: z.number(),                    // 0-100; 100 = screams AI-generated
+  faceMatchScore: z.number().nullable(),    // vs the provided reference sheet; null when none attached
+  fidelityToSource: z.number().nullable(),  // vs the source beat's filming spec; null when no source beat
+  tells: z.array(z.object({
+    tell: z.string(),                       // "plastic poreless skin on the cheeks"
+    severity: z.enum(['minor', 'moderate', 'fatal']),
+    where: z.string(),                      // where in the frame/clip
+  })),
+  fixes: z.array(z.object({
+    field: z.enum(['nbPrompt', 'sdPrompt', 'motionPrompt', 'postProcessing', 'recast']),
+    change: z.string(),                     // the targeted edit to regenerate THIS beat
+  })),
+  verdict: z.string(),                      // one brutal sentence: post it or regenerate it
 });
 
 // ─────────────────────────────────────────────────────────────

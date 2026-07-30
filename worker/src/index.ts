@@ -4,10 +4,11 @@
  * with real HTTP status codes — never a 200 wrapping an error (fixes N2).
  */
 import type { Env } from './env';
+import { GeminiQuotaError } from './gemini';
 import { authenticate } from './auth';
 import { err, handleOptions, json } from './http';
 import { analyze } from './routes/analyze';
-import { generate, getGeneration, listGenerations } from './routes/generate';
+import { generate, generateVariant, getGeneration, listGenerations } from './routes/generate';
 import {
   createFormat, deleteFormat, getFormat, getVersion, listFormats, listVersions, reindexFts, updateFormat,
 } from './routes/formats';
@@ -15,6 +16,7 @@ import { exportBriefs, exportFormat, exportJson } from './routes/export';
 import { deleteProfile, getProfile, listProfiles, putProfile } from './routes/profiles';
 import { getJob } from './routes/jobs';
 import { backfillTaxonomy } from './routes/admin';
+import { qaBeat } from './routes/qa';
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -40,6 +42,10 @@ export default {
       // ── generate ──
       if (m === 'POST' && seg[0] === 'generate' && seg.length === 1) {
         return await generate(req, env, ctx);
+      }
+      // Internal SELF dispatch: one ideation variant per invocation (own CPU budget).
+      if (m === 'POST' && seg[0] === 'generate' && seg[1] === 'variant' && seg.length === 2) {
+        return await generateVariant(req, env);
       }
       if (m === 'GET' && seg[0] === 'generations' && seg[1] && seg.length === 2) {
         return await getGeneration(req, env, seg[1]);
@@ -84,6 +90,11 @@ export default {
         }
       }
 
+      // ── qa loopback (Part H — optional/hero-only render inspection) ──
+      if (m === 'POST' && seg[0] === 'qa' && seg[1] && seg[2] !== undefined && seg.length === 3) {
+        return await qaBeat(req, env, ctx, seg[1], Number(seg[2]));
+      }
+
       // ── jobs ──
       if (m === 'GET' && seg[0] === 'jobs' && seg[1] && seg.length === 2) {
         return await getJob(req, env, seg[1]);
@@ -105,6 +116,12 @@ export default {
 
       return err('not_found', `no route: ${m} ${url.pathname}`, 404, req, env);
     } catch (e) {
+      // Quota problems are operational, not bugs — surface them as such so the UI
+      // shows "top up billing / wait a minute" instead of a scary INTERNAL dump.
+      if (e instanceof GeminiQuotaError) {
+        const code = e.kind === 'spend_cap' ? 'gemini_billing_cap' : 'gemini_rate_limited';
+        return err(code, e.message, 503, req, env);
+      }
       const message = e instanceof Error ? e.message : String(e);
       return err('internal', message, 500, req, env);
     }

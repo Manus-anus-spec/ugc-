@@ -65,3 +65,10 @@
 - Exports live: /export/json (73KB full dump), /formats/:id/export?fmt=markdown (readable brief + generations — the transparency wedge), /export/briefs (operator-Claude feed, ?profile= filter; sessions should migrate from sav-content-library /prompts to this).
 - Long-form: File API duration now drives resolution tiering (>90s = medium) and async routing (>300s = 202 job + /jobs/:id polling; pipeline completes under waitUntil). NOTE: windowed two-pass segmentation deferred — single-pass at tiered resolution first; add windows only if a long-form golden shows quality gaps.
 - UI: version-history chips + snapshot viewer, copy-brief(md), async polling in useAnalyze. Deployed: worker 385cd894, Pages index-C47Th-zp.js. Remaining from plan §8: Phase 6 decommission (KV freeze + scanner route strip) — needs a 2-week soak first.
+
+## v3 Filming-Fidelity upgrade · 2026-07-25
+- Full "reproduce the filming" spec (OMC-audited) implemented: multi-pass perception (fps sampling via videoMetadata — the app was blind at 1fps before), reproduce/adapt fidelityMode, schema extensions (all optional; 7 archived goldens verified parsing), post-append realism injectors + fidelity linter, trim map + postProcessing, /qa loopback. Doc: docs/V3-FILMING-FIDELITY.md.
+- Deployed worker 604f6c5f. tsc clean (worker+frontend), 90+ compiler tests green.
+- GEMINI_MODEL_FAST pinned gemini-2.5-flash (validated live Jul 21); swap to a 3.x flash by var when available.
+- fps-honored detector: usageMetadata.promptTokenCount vs fitVideoSampling estimate → warn + timingConfidence 'low' if Google ignores fps (upstream issue googleapis/python-genai#2171 unresolved).
+- ⚠️ LIVE ACCEPTANCE BLOCKED: monthly spend cap still exhausted (confirmed via friendly 503 gemini_billing_cap on a real 45s upload). After top-up: re-run analyze on a fast-cut cooking reel, then POST /generate {fidelityMode:'reproduce', profileId:'rosalia'} and check beats pin 1:1 w/ source camera tokens + trim map.

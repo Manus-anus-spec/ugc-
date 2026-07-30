@@ -6,10 +6,30 @@
 import { z } from 'zod';
 import {
   AnalyzeResponseSchema,
+  AnalyzerBeatSchema,
   AnalyzerOutputSchema,
   ApiErrorSchema,
+  AudioBeatMapEntrySchema,
   BeatGenerationSchema,
   BeatSchema,
+  BoundaryMapSchema,
+  CameraAngleSchema,
+  ContinuityLockSchema,
+  CutTransitionSchema,
+  FidelityModeSchema,
+  FirstFrameSourceSchema,
+  LoopSchema,
+  MotionCadenceSchema,
+  MotionWindowDetailSchema,
+  PacingSchema,
+  PerceptionOutputSchema,
+  QaVerdictSchema,
+  PostProcessingSchema,
+  ProductionRouteStepSchema,
+  RealismTellSchema,
+  SecondaryMotionSchema,
+  ShotSizeSchema,
+  TrimSpecSchema,
   CameraDynamicsSchema,
   CameraSetupKindSchema,
   CameraSetupSchema,
@@ -69,6 +89,28 @@ export type EditPlan = z.infer<typeof EditPlanSchema>;
 export type LipSyncPlan = z.infer<typeof LipSyncPlanSchema>;
 export type Ideation = z.infer<typeof IdeationSchema>;
 export type GenerationRun = z.infer<typeof GenerationRunSchema>;
+
+// ── v3 filming-fidelity types ──
+export type ShotSize = z.infer<typeof ShotSizeSchema>;
+export type CameraAngle = z.infer<typeof CameraAngleSchema>;
+export type CutTransition = z.infer<typeof CutTransitionSchema>;
+export type FidelityMode = z.infer<typeof FidelityModeSchema>;
+export type FirstFrameSource = z.infer<typeof FirstFrameSourceSchema>;
+export type RealismTell = z.infer<typeof RealismTellSchema>;
+export type SecondaryMotion = z.infer<typeof SecondaryMotionSchema>;
+export type Pacing = z.infer<typeof PacingSchema>;
+export type AudioBeatMapEntry = z.infer<typeof AudioBeatMapEntrySchema>;
+export type Loop = z.infer<typeof LoopSchema>;
+export type MotionCadence = z.infer<typeof MotionCadenceSchema>;
+export type AnalyzerBeat = z.infer<typeof AnalyzerBeatSchema>;
+export type PerceptionOutput = z.infer<typeof PerceptionOutputSchema>;
+export type BoundaryMap = z.infer<typeof BoundaryMapSchema>;
+export type MotionWindowDetail = z.infer<typeof MotionWindowDetailSchema>;
+export type ContinuityLock = z.infer<typeof ContinuityLockSchema>;
+export type TrimSpec = z.infer<typeof TrimSpecSchema>;
+export type PostProcessing = z.infer<typeof PostProcessingSchema>;
+export type ProductionRouteStep = z.infer<typeof ProductionRouteStepSchema>;
+export type QaVerdict = z.infer<typeof QaVerdictSchema>;
 
 export type Job = z.infer<typeof JobSchema>;
 export type ApiError = z.infer<typeof ApiErrorSchema>;

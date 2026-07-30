@@ -14,6 +14,9 @@ function beatLines(i: Ideation): string {
   return i.beats.map((b, n) => `
 #### Beat ${n + 1} · ${b.timestamp}${b.dialogue ? ` · “${b.dialogue}”` : ''}
 ${b.action}
+${b.shotSize ? `**Filming:** ${b.shotSize} · ${b.cameraAngle ?? ''} angle · ${b.durationSec ?? '?'}s · enters on ${b.cutType ?? 'cut'}${b.firstFrameSource ? ` · first frame: ${b.firstFrameSource.replace(/_/g, ' ')}` : ''}` : ''}
+${b.motionBeat ? `**Motion beat:** ${b.motionBeat}` : ''}
+${b.productionRoute?.length ? `**Route:** ${b.productionRoute.map((s) => s.tool).join(' → ')}` : ''}
 
 **NanoBanana**
 \`\`\`
@@ -27,6 +30,24 @@ ${b.sdPrompt}
 \`\`\`
 ${b.motionPrompt}
 \`\`\``).join('\n');
+}
+
+function editPlanLines(i: Ideation): string {
+  const plan = i.editPlan;
+  if (!plan) return '';
+  const trims = plan.clips.filter((c) => c.trim).map((c) => {
+    if (c.slices && c.slices.length > 1) {
+      const cuts = c.slices.map((s) => `${s.useInSec}–${s.useOutSec}s${s.landsOnBeat ? ' (on beat)' : ''}`).join(', ');
+      return `- clip ${c.clipIndex}: ONE ${c.slices[0]!.generatedDurationSec}s take → chop ${c.slices.length} cuts: ${cuts}`;
+    }
+    return `- clip ${c.clipIndex}: generate ${c.trim!.generatedDurationSec}s, use ${c.trim!.useInSec}–${c.trim!.useOutSec}s${c.trim!.cutOnBeatAtSec !== undefined ? `, cut lands ${c.trim!.landsOnBeat ? 'ON' : 'OFF'} the beat at ${c.trim!.cutOnBeatAtSec}s` : ''}`;
+  });
+  const pp = plan.postProcessing;
+  return [
+    trims.length ? `**Trim map (generate long, slice on the beat):**\n${trims.join('\n')}` : '',
+    plan.loopPlan ? `**Loop:** ${plan.loopPlan}` : '',
+    pp ? `**Post:** ${pp.fps}fps · grain: ${pp.addGrain} · shake: ${pp.addHandheldShake} · blur: ${pp.motionBlurAmount} · ${pp.reencodeProfile} · ${pp.aspect}${pp.rollingShutterOnPans ? ' · rolling shutter on pans' : ''}` : '',
+  ].filter(Boolean).join('\n');
 }
 
 export function dnaToMarkdown(dna: FormatDna, runs: GenerationRun[]): string {
@@ -78,6 +99,11 @@ export function dnaToMarkdown(dna: FormatDna, runs: GenerationRun[]): string {
       lines.push('', `**Caption:** ${i.copy.caption}`, `**Hashtags:** ${i.copy.hashtags.join(' ')}`);
       lines.push(`**Overlays:** ${i.copy.textOverlays.map((t) => `“${t}”`).join(' · ')}`);
       lines.push(`**Audio:** ${i.audioPlan.type} — ${i.audioPlan.description}`);
+      if (i.continuityLock) {
+        lines.push(`**Continuity lock:** ${i.continuityLock.setDescription} · ${i.continuityLock.wardrobeExact} · ${i.continuityLock.hairExact} · ${i.continuityLock.lightingExact} (${i.continuityLock.colorTempK}, ${i.continuityLock.timeOfDay})`);
+      }
+      const epl = editPlanLines(i);
+      if (epl) lines.push(epl);
       lines.push(`**Editing:** ${i.editingNotes}`);
     }
   }
