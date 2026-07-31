@@ -124,6 +124,16 @@ export async function analyze(req: Request, env: Env, ctx: ExecutionContext): Pr
   const videoFile = form.get(ANALYZE_FIELDS.video);
 
   // ── 2. Resolve + upload (we need the duration before choosing sync vs async) ──
+  // TODO(one-click audio — Jul 30 meeting w/ Niko): the operator currently re-finds the
+  // source audio manually (Instagram → download → CapCut extract). We already hold the
+  // resolved direct media URL right here. Design (deferred — Workers can't demux audio,
+  // no ffmpeg): (a) persist resolved.directUrl (+ platform) on the format row at analyze
+  // time; (b) add GET /formats/:id/source-media that re-resolves on demand and streams/
+  // 302s the video for download, so the operator drops it straight into CapCut and taps
+  // "extract audio" — kills the re-finding step; (c) full server-side audio extraction
+  // would need a container/external service (e.g. Cloudflare Containers or an ffmpeg
+  // microservice) — revisit if (b) isn't enough. UI: a "Download source audio/video"
+  // button on the format card.
   let src: SourceInfo;
   try {
     if (typeof videoUrl === 'string' && videoUrl.trim()) {

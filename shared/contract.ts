@@ -54,6 +54,7 @@ import {
   VariationStrengthSchema,
   VideoFormatSchema,
   VideoModelChoiceSchema,
+  VideoModelTargetSchema,
   ViralityForecastSchema,
   ViralityScorecardSchema,
 } from './schemas';
@@ -61,6 +62,7 @@ import {
 export type Platform = z.infer<typeof PlatformSchema>;
 export type ContentRating = z.infer<typeof ContentRatingSchema>;
 export type VideoModelChoice = z.infer<typeof VideoModelChoiceSchema>;
+export type VideoModelTarget = z.infer<typeof VideoModelTargetSchema>;
 export type VideoFormat = z.infer<typeof VideoFormatSchema>;
 export type VariationStrength = z.infer<typeof VariationStrengthSchema>;
 export type GenerationStatus = z.infer<typeof GenerationStatusSchema>;

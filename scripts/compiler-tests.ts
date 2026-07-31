@@ -9,7 +9,8 @@ import {
   buildProductionRoute, buildTrim, chooseVideoModel, ensureAesthetic, ensureBeatCameraPhysics,
   ensureCameraPhysics, ensureContinuity, ensureDialogueEmbedded, ensureMicroExpression, ensureMotionCadence,
   applyEditPlanFidelity, applyUniversalSanitize, buildDefaultContinuityLock, buildSegmentPlanText,
-  ensureNbRealism, ensureSecondaryMotion, ensureSegmentTimeline, ensureSkinTexture, planSegments,
+  ensureIdleBehavior, ensureNbRealism, ensureSecondaryMotion, ensureSegmentTimeline, ensureSkinTexture,
+  planSegments, resolveWardrobeImage,
   lintFidelity, lintMotionPrompt, lintNbPrompt, lintPlasticTells, motionCharCap,
   needsFaceForwardFix, stripIdentityDescriptors, wrapIdentityLock,
   CDANCE_SUBTITLE_TAIL, KLING_HANDHELD_TAIL,
@@ -30,11 +31,14 @@ for (const p of SEED_PROFILES) {
   check(`profile ${p.id} validates`, r.success, r.success ? '' : JSON.stringify(r.error.issues.slice(0, 3)));
 }
 
-// ── Kling-vs-CDance decision table (ports scanner:1858-1879) ──
-check('dialogue → cdance', chooseVideoModel({ hasDialogue: true, clipCount: 1, durationSec: 8, emotionalRangeHigh: false }).choice === 'cdance_2');
-check('multi-clip → cdance', chooseVideoModel({ hasDialogue: false, clipCount: 3, durationSec: 15, emotionalRangeHigh: false }).choice === 'cdance_2');
-check('emotional → cdance', chooseVideoModel({ hasDialogue: false, clipCount: 1, durationSec: 8, emotionalRangeHigh: true }).choice === 'cdance_2');
-check('simple one-shot → kling', chooseVideoModel({ hasDialogue: false, clipCount: 1, durationSec: 8, emotionalRangeHigh: false }).choice === 'kling_3');
+// ── video-model decision (Jul 31 retarget: Seedance 2.0 primary, Kling fallback seam) ──
+check('default target = seedance → cdance for everything', chooseVideoModel({ hasDialogue: false, clipCount: 1, durationSec: 8, emotionalRangeHigh: false }).choice === 'cdance_2');
+check('explicit seedance target → cdance', chooseVideoModel({ hasDialogue: false, clipCount: 1, durationSec: 8, emotionalRangeHigh: false, target: 'seedance' }).choice === 'cdance_2');
+// legacy table survives behind target: 'kling'
+check('kling target: dialogue → cdance', chooseVideoModel({ hasDialogue: true, clipCount: 1, durationSec: 8, emotionalRangeHigh: false, target: 'kling' }).choice === 'cdance_2');
+check('kling target: multi-clip → cdance', chooseVideoModel({ hasDialogue: false, clipCount: 3, durationSec: 15, emotionalRangeHigh: false, target: 'kling' }).choice === 'cdance_2');
+check('kling target: emotional → cdance', chooseVideoModel({ hasDialogue: false, clipCount: 1, durationSec: 8, emotionalRangeHigh: true, target: 'kling' }).choice === 'cdance_2');
+check('kling target: simple one-shot → kling', chooseVideoModel({ hasDialogue: false, clipCount: 1, durationSec: 8, emotionalRangeHigh: false, target: 'kling' }).choice === 'kling_3');
 
 // ── face-forward detection ──
 const dnaFacingAway = {
@@ -85,6 +89,18 @@ const longWithDialogue = lintMotionPrompt(`${'x'.repeat(600)} she says: "${dlg}"
 check('dialogue beat allows up to 1100 chars', !longWithDialogue.some((v) => v.problem.includes('cap')), JSON.stringify(longWithDialogue));
 const longNoDialogue = lintMotionPrompt('x'.repeat(1000), SAV_PROFILE, 'MULTI_CLIP', 0);
 check('no-dialogue beat still capped at 900', longNoDialogue.some((v) => v.problem.includes('900')));
+
+// ── frozen-language + prescribed-expression lint (human-prompting guide §1-2) ──
+const frozen1 = lintMotionPrompt('She pauses and looks at the camera, then stands frozen by the door.', SAV_PROFILE, 'MULTI_CLIP', 0);
+check('frozen language caught ("pauses"/"stands frozen")', frozen1.some((v) => v.problem.includes('frozen-language')), JSON.stringify(frozen1));
+const frozen2 = lintMotionPrompt('She maintains eye contact while she holds the expression.', SAV_PROFILE, 'MULTI_CLIP', 0);
+check('frozen language caught ("maintains eye contact"/"holds the expression")', frozen2.some((v) => v.problem.includes('frozen-language')), JSON.stringify(frozen2));
+const frozenNeg = lintMotionPrompt('The action flows with NO freezing, no frozen pose between actions; small pauses while chewing keep the timing human.', SAV_PROFILE, 'MULTI_CLIP', 0);
+check('negated/noun frozen usage passes ("NO freezing", "small pauses")', !frozenNeg.some((v) => v.problem.includes('frozen-language')), JSON.stringify(frozenNeg));
+const prescribed = lintMotionPrompt('She tilts her head back in intense pleasure, eyes rolling back.', SAV_PROFILE, 'MULTI_CLIP', 0);
+check('prescribed expression caught ("intense pleasure")', prescribed.some((v) => v.problem.includes('prescribed expression')), JSON.stringify(prescribed));
+const reactionDriven = lintMotionPrompt('She reacts instinctively to the flavor as the broth is unexpectedly good, her expression developing while she chews.', SAV_PROFILE, 'MULTI_CLIP', 0);
+check('reaction-driven phrasing passes', reactionDriven.length === 0, JSON.stringify(reactionDriven));
 
 // ── cinematizer lint ──
 const cine = lintMotionPrompt('Handheld iPhone footage, cinematic slow push-in as she turns.', SAV_PROFILE, 'MULTI_CLIP', 0);
@@ -176,15 +192,38 @@ const fullCam = 'Medium shot, waist-up, subject fills 60%, quick down-tilt to th
 check('beat camera untouched when all tokens present', ensureBeatCameraPhysics(fullCam, SRC_BEAT) === fullCam, ensureBeatCameraPhysics(fullCam, SRC_BEAT));
 check('no source beat → unchanged', ensureBeatCameraPhysics(bare2, undefined) === bare2);
 
-// ── ensureSecondaryMotion ──
+// ── ensureSecondaryMotion (guide §7: max 2 cues — over-describing animates the clothes) ──
 const noSm = 'She turns to the camera and laughs, hold ~1.4s.';
 const withSm = ensureSecondaryMotion(noSm, SRC_BEAT.secondaryMotion);
 check('secondary motion injected from beat', withSm.includes('hair swings forward') && withSm.includes('apron ripples'), withSm);
+check('secondary motion capped at 2 cues (softBody dropped)', !withSm.includes('natural bounce through the laugh'), withSm);
 check('secondary motion idempotent', ensureSecondaryMotion(withSm, SRC_BEAT.secondaryMotion) === withSm);
 const defaulted = ensureSecondaryMotion(noSm, undefined);
 check('secondary motion REQUIRED — default injected when beat has none', /Secondary motion:/.test(defaulted), defaulted);
 const alreadySm = 'Her hair swings as she spins, skirt sways with the turn.';
 check('secondary motion untouched when present', ensureSecondaryMotion(alreadySm, SRC_BEAT.secondaryMotion) === alreadySm);
+
+// ── ensureIdleBehavior (guide §7 global block) ──
+const idled = ensureIdleBehavior('She stirs the pot and glances at the camera.');
+check('idle-behavior block appended', /idle human behavior/i.test(idled) && /no frozen pose between actions/.test(idled), idled);
+check('idle-behavior idempotent', ensureIdleBehavior(idled) === idled);
+check('idle block itself passes frozen-language lint (negated usage)',
+  !lintMotionPrompt(idled, SAV_PROFILE, 'ONE_SHOT', 0).some((v) => v.problem.includes('frozen-language')),
+  JSON.stringify(lintMotionPrompt(idled, SAV_PROFILE, 'ONE_SHOT', 0)));
+
+// ── wardrobe reference-image resolution (Jul 30 meeting) ──
+const wardrobeProfile = {
+  ...SAV_PROFILE,
+  looks: {
+    ...structuredClone(SAV_PROFILE.looks),
+    wardrobeImages: { 'going-out fit': 'Aruna Talent - files/Keira/Assets/Outfits/_closet/going-out fit.jpg' },
+  },
+} as ModelProfile;
+const wLock: ContinuityLock = { ...LOCK, wardrobeKey: 'going-out fit' };
+check('wardrobe image resolved via wardrobeKey', resolveWardrobeImage(wLock, wardrobeProfile)?.endsWith('going-out fit.jpg') === true);
+const wLockFuzzy: ContinuityLock = { ...LOCK, wardrobeExact: 'her going-out fit: emerald ruched mini dress' };
+check('wardrobe image resolved via fuzzy wardrobeExact match', resolveWardrobeImage(wLockFuzzy, wardrobeProfile)?.endsWith('going-out fit.jpg') === true);
+check('no wardrobeImages on profile → undefined', resolveWardrobeImage(wLock, SAV_PROFILE) === undefined);
 
 // ── ensureMicroExpression ──
 const faceBeat = ensureMicroExpression('Waist-up selfie angle, she talks to the lens.', 'waist-up, subject fills 60%', SRC_BEAT.microExpression);

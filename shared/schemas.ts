@@ -15,7 +15,11 @@ import { z } from 'zod';
 // ─────────────────────────────────────────────────────────────
 export const PlatformSchema = z.enum(['tiktok', 'instagram', 'youtube', 'pinterest', 'upload']);
 export const ContentRatingSchema = z.enum(['sfw', 'borderline', 'nsfw']);
+/** cdance_2 = Seedance 2.0 — the primary production model since the Jul-31 retarget;
+ *  kling_3 stays as the model-aware fallback (selected via VideoModelTarget). */
 export const VideoModelChoiceSchema = z.enum(['kling_3', 'cdance_2']);
+/** Which video model a /generate run optimizes its motionPrompts for. */
+export const VideoModelTargetSchema = z.enum(['seedance', 'kling']);
 export const VideoFormatSchema = z.enum(['ONE_SHOT', 'MULTI_CLIP']);
 export const VariationStrengthSchema = z.enum(['close', 'medium', 'bold']);
 export const GenerationStatusSchema = z.enum(['draft', 'approved', 'produced']);
@@ -47,7 +51,10 @@ export const RealismTellSchema = z.enum([
 ]);
 
 /** What moves BESIDES the subject's primary action — hair/fabric/soft-tissue/jewelry
- *  inertia. Its absence is the loudest fixable AI-motion tell in generated video. */
+ *  inertia. Observation record: fill all four fields from pixels. PROMPT USAGE is the
+ *  opposite of exhaustive — carry only the 1-2 most natural cues into a motion prompt
+ *  (e.g. hair with the head turn, fabric with a weight shift); stacking secondary-motion
+ *  descriptions makes video models animate the clothing instead of the person. */
 export const SecondaryMotionSchema = z.object({
   hair: z.string(),          // "hair swings forward as she leans, settles over ~0.5s" | "tied back, static"
   fabric: z.string(),        // "apron ripples with each arm move" | "rigid denim, minimal"
@@ -466,6 +473,11 @@ export const ModelProfileSchema = z.object({
     hair: z.record(z.string(), z.string()),
     nails: z.string().optional(),
     wardrobeDefaults: z.record(z.string(), z.string()),  // role → concrete outfit description
+    /** role/key → garment reference-image path (e.g. Keira's "Aruna Talent - files/Keira/
+     *  Assets/Outfits/_closet/<key>.jpg"). Surfaced in briefs/exports so the operator
+     *  attaches the garment photo to the Seedream/WaveSpeed call alongside the face ref
+     *  — the text describes the garment, the image locks it. Never enters prompt text. */
+    wardrobeImages: z.record(z.string(), z.string()).optional(),
     workContextRatio: z.string().optional(),   // "20-30% uniform / 70-80% off-duty"
   }),
   /**
@@ -625,6 +637,7 @@ export const EditPlanSchema = z.object({
 export const ContinuityLockSchema = z.object({
   setDescription: z.string(),       // the ONE set, concrete: "small sunlit farmhouse kitchen, butcher-block counters"
   wardrobeExact: z.string(),        // exact garments incl. colors — identical in every beat
+  wardrobeKey: z.string().optional(),   // which looks.wardrobeDefaults key the outfit came from — drives garment-image attachment
   hairExact: z.string(),            // exact style + state
   lightingExact: z.string(),        // sources + direction + behavior, held constant
   colorTempK: z.string(),           // categorical: "warm indoor ~3000K"
@@ -679,6 +692,10 @@ export const IdeationSchema = z.object({
   }),
   virality: ViralityForecastSchema.optional(),  // required for new runs (generator schema); optional for old rows
   continuityLock: ContinuityLockSchema.optional(),  // v3 — required for new runs; optional for old rows
+  /** Resolved garment reference-image path for this ideation's look (from
+   *  profile.looks.wardrobeImages via continuityLock.wardrobeKey) — brief metadata,
+   *  never part of any prompt box. */
+  wardrobeImagePath: z.string().optional(),
   status: GenerationStatusSchema,
 });
 
@@ -692,6 +709,7 @@ export const GenerationRunSchema = z.object({
   profileVersion: z.number().int(),
   variationStrength: VariationStrengthSchema,  // close-but-fresh (default) → bold
   fidelityMode: FidelityModeSchema.optional(),  // v3 — 'reproduce' (default) | 'adapt'; optional for old rows
+  videoModelTarget: VideoModelTargetSchema.optional(),  // Jul 31 — 'seedance' (default) | 'kling'; optional for old rows
   formulaExtracted: z.string(),     // the format's formula, shared across ideations
   ideations: z.array(IdeationSchema),
   createdAt: z.string(),

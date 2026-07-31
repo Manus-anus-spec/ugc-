@@ -126,7 +126,7 @@ export const SAV_PROFILE: ModelProfile = {
         self_held_selfie: 'selfie angle, natural handheld micro-shake, phone drifts with movement',
         mirror_selfie: 'mirror selfie, phone moves naturally with her body',
         propped_on_surface: 'placed camera at hip height, full body visible, static',
-        third_person: 'friend-filmed handheld at eye level, subtle natural micro-shake',
+        third_person: 'handheld phone held by a friend at chest height with a slight downward tilt, slightly shaky, the camera reacts to her movement and settles',
         camera_put_down: 'placed camera, static after set-down, full body visible',
       },
       faceForwardRequired: true,
@@ -235,6 +235,11 @@ export const NIKO_DEFAULT_PROFILE: ModelProfile = {
   ...structuredClone(NAOMI_PROFILE),
   id: 'niko-default',
   name: 'Niko — template',
+  // ONBOARDING REQUIREMENTS (docs/MODEL-ONBOARDING-SOP.md, Jul 30 meeting): before
+  // this template becomes a real model — (1) 4-6 NEUTRAL face refs (passport-style,
+  // bland expression, front + both ¾ angles; smiley sheets caused Kira's face-drift
+  // wall), (2) concrete wardrobeDefaults for every key + looks.wardrobeImages garment
+  // photos, (3) world whitelist/banlist from the model's actual lore.
   refs: { strategy: 'sheet_ids' },   // TODO Niko: face/body sheet ids + world + voice (plan §9 Q5)
   world: {
     locationWhitelist: [],

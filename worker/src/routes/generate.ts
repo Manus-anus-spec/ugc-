@@ -16,9 +16,9 @@ import {
   BeatGenerationSchema, CameraAngleSchema, ContinuityLockSchema, CutTransitionSchema,
   EditPlanSchema, FidelityModeSchema, FirstFrameSourceSchema, GenerationRunSchema, IdeationSchema,
   LipSyncPlanSchema, ModelProfileSchema, SecondaryMotionSchema, ShotSizeSchema,
-  VariationStrengthSchema, ViralityForecastSchema,
+  VariationStrengthSchema, VideoModelTargetSchema, ViralityForecastSchema,
 } from '../../../shared/schemas';
-import type { FidelityMode, FormatDna, GenerationRun, ModelProfile } from '../../../shared/contract';
+import type { FidelityMode, FormatDna, GenerationRun, ModelProfile, VideoModelTarget } from '../../../shared/contract';
 import { API_VERSION, type Env } from '../env';
 import { err, json, newId, nowIso } from '../http';
 import { callGeminiJson, GeminiQuotaError, geminiKeys, withGeminiKeyFailover } from '../gemini';
@@ -41,6 +41,9 @@ const RequestSchema = z.object({
   /** v3: 'reproduce' (default) transplants the source FILMING 1:1 into the profile's
    *  world; 'adapt' is the classic reinvent-the-surface ideation. */
   fidelityMode: FidelityModeSchema.default('reproduce'),
+  /** Jul 31 retarget: which video model the motionPrompts optimize for —
+   *  'seedance' (Seedance 2.0, the production default) | 'kling' (legacy fallback). */
+  videoModelTarget: VideoModelTargetSchema.default('seedance'),
 });
 
 /** Internal per-variant dispatch (SELF binding) — same params plus which variant. */
@@ -113,11 +116,11 @@ export async function generate(req: Request, env: Env, ctx: ExecutionContext): P
   if (!parsed.success) {
     return err('invalid_body', 'body must be { formatId, profileId, variationStrength? }', 400, req, env, parsed.error.issues);
   }
-  const { formatId, profileId, variationStrength, fidelityMode } = parsed.data;
+  const { formatId, profileId, variationStrength, fidelityMode, videoModelTarget } = parsed.data;
   // The whole pipeline runs inside waitUntil: a client disconnect (tab closed,
   // page reloaded) can no longer cancel the invocation and orphan a paid Gemini
   // call — the run still completes and lands in D1, recoverable via history.
-  const work = runGeneration(req, env, formatId, profileId, variationStrength, fidelityMode);
+  const work = runGeneration(req, env, formatId, profileId, variationStrength, fidelityMode, videoModelTarget);
   ctx.waitUntil(work.then(() => undefined, () => undefined));
   return work;
 }
@@ -130,11 +133,11 @@ export async function generateVariant(req: Request, env: Env): Promise<Response>
   if (!parsed.success) {
     return err('invalid_body', 'body must be { formatId, profileId, variationStrength, fidelityMode, variant }', 400, req, env, parsed.error.issues);
   }
-  const { formatId, profileId, variationStrength, fidelityMode, variant } = parsed.data;
+  const { formatId, profileId, variationStrength, fidelityMode, videoModelTarget, variant } = parsed.data;
   const loaded = await loadFormatAndProfile(req, env, formatId, profileId);
   if (loaded instanceof Response) return loaded;
   try {
-    const result = await runSingleVariant(env, loaded.dna, loaded.profile, variationStrength, fidelityMode, variant);
+    const result = await runSingleVariant(env, loaded.dna, loaded.profile, variationStrength, fidelityMode, variant, videoModelTarget);
     return json(result, 200, req, env);
   } catch (e) {
     if (e instanceof InputBlocked) return err('gemini_input_blocked', INPUT_BLOCKED_MESSAGE, 502, req, env);
@@ -172,6 +175,7 @@ async function runSingleVariant(
   env: Env, dna: FormatDna, profile: ModelProfile,
   variationStrength: z.infer<typeof VariationStrengthSchema>,
   fidelityMode: FidelityMode, variant: number,
+  videoModelTarget: VideoModelTarget = 'seedance',
 ): Promise<VariantResult> {
   // ── Layer 1 (pre): sanitize the LLM input; stored DNA keeps raw observations.
   // Universal map runs AFTER the profile map as the safety net — Gemini's input
@@ -205,7 +209,7 @@ async function runSingleVariant(
     e instanceof Error && /blocked the input/i.test(e.message);
 
   const systemInstruction =
-    `${buildGeneratorInstruction(profile, variationStrength, 1, fidelityMode, unitCount, segmentPlan)}\n\n# VARIANT DIRECTIVE\n${VARIANT_HINTS[variant]}`;
+    `${buildGeneratorInstruction(profile, variationStrength, 1, fidelityMode, unitCount, segmentPlan, videoModelTarget)}\n\n# VARIANT DIRECTIVE\n${VARIANT_HINTS[variant]}`;
   const call = (text: string, model = env.GEMINI_MODEL) => callGeminiJson({
     apiKey: activeKey,
     model,
@@ -262,7 +266,7 @@ async function runSingleVariant(
   if (!ideation) throw new Error(`variant ${variant}: generator returned no ideation`);
 
   // Deterministic enforcement + ONE targeted rewrite, scoped to THIS ideation only.
-  let violations = enforceIdeation(ideation, profile, dna, fidelityMode);
+  let violations = enforceIdeation(ideation, profile, dna, fidelityMode, videoModelTarget);
   if (violations.length > 0) {
     try {
       const rewritten = await repairCall(buildLintRepairPrompt(
@@ -272,7 +276,7 @@ async function runSingleVariant(
       const reparsed = LlmOutputSchema.safeParse(tryParse(rewritten));
       if (reparsed.success && reparsed.data.ideations[0]) {
         const fixed = reparsed.data.ideations[0];
-        const remaining = enforceIdeation(fixed, profile, dna, fidelityMode);
+        const remaining = enforceIdeation(fixed, profile, dna, fidelityMode, videoModelTarget);
         if (remaining.length === 0) return { formula: output.data.formulaExtracted, ideation: fixed };
         violations = remaining;
       }
@@ -288,6 +292,7 @@ async function runGeneration(
   req: Request, env: Env, formatId: string, profileId: string,
   variationStrength: z.infer<typeof VariationStrengthSchema>,
   fidelityMode: FidelityMode,
+  videoModelTarget: VideoModelTarget = 'seedance',
 ): Promise<Response> {
 
   // ── Load + validate up front (cheap): 404/422 before any variant is dispatched ──
@@ -299,14 +304,14 @@ async function runGeneration(
   // via the SELF binding (own CPU budget; see header comment). Inline fallback keeps
   // `wrangler dev` working without the binding.
   const dispatchVariant = async (variant: number): Promise<VariantResult> => {
-    if (!env.SELF) return runSingleVariant(env, dna, profile, variationStrength, fidelityMode, variant);
+    if (!env.SELF) return runSingleVariant(env, dna, profile, variationStrength, fidelityMode, variant, videoModelTarget);
     const res = await env.SELF.fetch('https://ugc-api.internal/generate/variant', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-API-Key': req.headers.get('X-API-Key') ?? '',
       },
-      body: JSON.stringify({ formatId, profileId, variationStrength, fidelityMode, variant }),
+      body: JSON.stringify({ formatId, profileId, variationStrength, fidelityMode, videoModelTarget, variant }),
     });
     const body = await res.json().catch(() => null) as
       | (VariantResult & { error?: undefined; code?: undefined })
@@ -358,6 +363,7 @@ async function runGeneration(
     profileVersion: profile.version,
     variationStrength,
     fidelityMode,
+    videoModelTarget,
     formulaExtracted: output.data.formulaExtracted,
     ideations: output.data.ideations.map((i, idx) => ({ ...i, index: idx })),
     createdAt: now,

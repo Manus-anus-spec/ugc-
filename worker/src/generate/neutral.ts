@@ -64,7 +64,7 @@ export const NEUTRAL_PROFILE: ModelProfile = {
   },
   toolRules: {
     nb: {
-      structureNotes: 'Order: opener → scene/action (the subject MUST face the camera; describe exact body position and both hands) → clothing as SEEN at role level (fabric, cut, exact color shade — never identity) → ONE clear expression described as feeling → hair BEHAVIOR/state only (e.g. "hair tied back", "hair swings loose") — never color/length/texture as identity → camera setup line → lighting with exact source → 1-2 imperfect real props → standing lock if full-body ("Both feet flat on floor, legs straight, standing upright — NOT kneeling, NOT squatting, NOT bending.") → closer.',
+      structureNotes: 'Order: opener → scene/action (the subject MUST face the camera; describe exact body position and both hands) → clothing as SEEN at role level (fabric, cut, exact color shade — never identity) → ONE clear expression described as feeling → hair BEHAVIOR/state only (e.g. "hair tied back", "hair swings loose") — never color/length/texture as identity → camera setup line → lighting with exact source → 1-2 imperfect real props → standing lock if full-body ("Both feet flat on floor, legs straight, standing upright — NOT kneeling, NOT squatting, NOT bending.") → closer. For third-person/propped environmental frames add the anti-portrait block: place the subject off-center by describing the frame ("she stands small near the doorway at the right of the frame; empty wall fills the left half") + "NOT centered, environmental composition, full body visible with feet in frame, lots of negative space, casual composition as if not intentionally framed."',
       bannedPhrases: [
         'age numbers', 'nationality', 'arm extended', 'hand holding phone',
         'studio lighting', 'bokeh', 'DSLR', 'cinematic', 'ring light',
@@ -87,10 +87,10 @@ export const NEUTRAL_PROFILE: ModelProfile = {
     video: {
       bannedWords: ['flash', 'phone in hand', 'holds phone', 'breathing', 'natural speed'],
       cameraLines: {
-        self_held_selfie: 'selfie angle, natural handheld micro-shake, phone drifts with movement',
+        self_held_selfie: 'selfie angle at arm\'s length, natural handheld micro-shake, framing drifts with her movement',
         mirror_selfie: 'mirror selfie, phone moves naturally with the body',
-        propped_on_surface: 'placed camera, full body visible, static locked-off',
-        third_person: 'friend-filmed handheld at eye level, subtle natural micro-shake',
+        propped_on_surface: 'placed camera, static locked-off, room visible around the subject',
+        third_person: 'handheld phone held by a friend at chest height with a slight downward tilt, slightly shaky, the camera reacts to her movement and settles',
         camera_put_down: 'placed camera, static after set-down, both hands free',
       },
       faceForwardRequired: true,

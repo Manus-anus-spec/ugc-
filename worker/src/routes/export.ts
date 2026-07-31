@@ -102,6 +102,9 @@ export function dnaToMarkdown(dna: FormatDna, runs: GenerationRun[]): string {
       if (i.continuityLock) {
         lines.push(`**Continuity lock:** ${i.continuityLock.setDescription} · ${i.continuityLock.wardrobeExact} · ${i.continuityLock.hairExact} · ${i.continuityLock.lightingExact} (${i.continuityLock.colorTempK}, ${i.continuityLock.timeOfDay})`);
       }
+      if (i.wardrobeImagePath) {
+        lines.push(`**Wardrobe ref image (attach to the Seedream/WaveSpeed call alongside the face ref — the text describes the garment, the image locks it):** \`${i.wardrobeImagePath}\``);
+      }
       const epl = editPlanLines(i);
       if (epl) lines.push(epl);
       lines.push(`**Editing:** ${i.editingNotes}`);

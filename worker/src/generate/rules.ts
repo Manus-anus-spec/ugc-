@@ -7,13 +7,20 @@
 import type {
   AudioBeatMapEntry, Beat, BeatGeneration, ContinuityLock, FidelityMode, FormatDna, Ideation,
   ModelProfile, PostProcessing, ProductionRouteStep, RealismTell, SdFrameType, SecondaryMotion,
-  TrimSpec, VideoModelChoice,
+  TrimSpec, VideoModelChoice, VideoModelTarget,
 } from '../../../shared/contract';
 
-/** Kling-vs-CDance decision (ports scanner:1858-1879). Applied to each ideation's own shape. */
+/** Video-model decision. Since the Seedance-2.0 retarget (Jul 31) the production model
+ *  is cdance_2 (= Seedance 2.0) for EVERYTHING — target 'seedance' is the default.
+ *  target 'kling' keeps the legacy cost-split table (ports scanner:1858-1879) as the
+ *  model-aware fallback seam: Kling for simple silent one-shots, CDance where needed. */
 export function chooseVideoModel(i: {
   hasDialogue: boolean; clipCount: number; durationSec: number; emotionalRangeHigh: boolean;
+  target?: VideoModelTarget;
 }): { choice: VideoModelChoice; reason: string } {
+  if ((i.target ?? 'seedance') === 'seedance') {
+    return { choice: 'cdance_2', reason: 'Seedance 2.0 is the primary production model (run target: seedance).' };
+  }
   if (i.hasDialogue) {
     return { choice: 'cdance_2', reason: 'Dialogue/lip-sync requires CDance — Kling cannot mouth words.' };
   }
@@ -23,7 +30,7 @@ export function chooseVideoModel(i: {
   if (i.emotionalRangeHigh) {
     return { choice: 'cdance_2', reason: 'Dramatic expression changes need CDance fidelity.' };
   }
-  return { choice: 'kling_3', reason: 'Single scene, no dialogue — Kling 3.0 is the cost-efficient default.' };
+  return { choice: 'kling_3', reason: 'Single scene, no dialogue — Kling 3.0 is the cost-efficient fallback (run target: kling).' };
 }
 
 /** Face-forward rule (ports scanner:1886-1890): opening beat must face camera. */
@@ -36,12 +43,25 @@ export function needsFaceForwardFix(dna: FormatDna): boolean {
 export interface LintViolation { beatIndex: number; field: string; problem: string }
 
 const SOFT_WORDS = ['subtle', 'gentle', 'soft'];
+
+/** Frozen language renders literal dead frames (guide §2). Negated usage ("NO freezing",
+ *  "no frozen pose between actions") is an instruction, not a violation. Noun usage with
+ *  a softening adjective ("small pauses while chewing") is realistic human timing — allowed. */
+const FROZEN_LANGUAGE = /(?<!\bno )(?<!\bnot )(?<!\bnever )(?<!\bwithout )(?<!small )(?<!tiny )(?<!micro )(?<!natural )\b(pauses?\b|pausing\b|freez(?:es?|ing)\b|frozen\b|stands? (?:completely )?frozen|holds? (?:the|her|his|that|this) (?:expression|pose|smile|look|gaze)|briefly holds?\b|staring\b|stares? (?:blankly|at)\b|maintains? eye contact|holds? still\b|stands? (?:completely |perfectly )?still\b)/i;
+
+/** The proven-bad named-expression labels (guide §1) — the model instant-swaps to a
+ *  theatrical face instead of letting a reaction develop. Kept deliberately narrow so
+ *  the lint never becomes an unwinnable rewrite loop (Jul 26 lesson). */
+const PRESCRIBED_EXPRESSIONS = /(?<!\bno )(?<!\bnot )(?<!\bnever )\b(intense pleasure|eyes? roll(?:ing|s)? back|rolls? (?:her |his )?eyes back|exaggerated bliss|shocked|stunned)\b/i;
 // Caps raised (Jul 26) — the enriched per-beat filming fields (shotSize/motionBeat/
 // secondaryMotion/microExpression/camera) legitimately lengthen the LLM's own motionPrompt
 // text; the old 550/700 caps were overflowing (790>550) and hard-failing generation.
 export const MOTION_CHAR_CAP_MULTI = 900;            // anchor (~200) + physics + action + enriched beat fields
 export const MOTION_CHAR_CAP_MULTI_DIALOGUE = 1100;  // + the verbatim quote + delivery — never truncate dialogue
-export const MOTION_CHAR_CAP_ONE_SHOT = 1400;
+// One-shot cap raised (Jul 31, human-prompting upgrade): the labeled continuous-take
+// skeleton (CONTINUITY/beats/ENVIRONMENT/CAMERA/PERFORMANCE/AUDIO) needs room —
+// Seedance 2.0 handles long structured choreography sheets well.
+export const MOTION_CHAR_CAP_ONE_SHOT = 2400;
 // Reproduce mode carries the source's camera/cut/motion structure in-prompt — more
 // load-bearing tokens, bigger budget (the fixed realism blocks are post-append and
 // never count against the LLM's cap either way).
@@ -84,6 +104,24 @@ export function lintMotionPrompt(
   const cinematizer = /(?<!not )(?<!no )(?<!non-)\b(cinematic|bokeh|shallow depth of field|film grain|35mm|anamorphic|color[- ]graded|colour[- ]graded|dramatic lighting|golden cinematic|8k|4k hdr|masterpiece)\b/i;
   const cm = prompt.match(cinematizer);
   if (cm) v.push({ beatIndex, field: 'motionPrompt', problem: `cinematizer word "${cm[0]}" used as a positive descriptor — kills UGC realism (allowed only inside a NOT/no negation)` });
+  // Frozen language renders literal dead frames (human-prompting guide §2) — allowed
+  // only inside a negation ("NO freezing", "no frozen pose between actions").
+  const fm = prompt.match(FROZEN_LANGUAGE);
+  if (fm) {
+    v.push({
+      beatIndex, field: 'motionPrompt',
+      problem: `frozen-language "${fm[0]}" creates dead frames — rewrite with continuous motion: "briefly looks toward…", "her expression shifts as…", "continues moving while…", "glances toward… then naturally returns her attention…"`,
+    });
+  }
+  // Named-expression prescriptions read as instant expression swaps — describe what
+  // she is REACTING TO instead (guide §1). Deliberately narrow: only the proven-bad labels.
+  const em = prompt.match(PRESCRIBED_EXPRESSIONS);
+  if (em) {
+    v.push({
+      beatIndex, field: 'motionPrompt',
+      problem: `prescribed expression "${em[0]}" — describe what she is reacting to and let the expression develop instead of naming a face`,
+    });
+  }
   // Self-contained rule applies ONLY to on-camera speech; voiceover scripts live in
   // the dialogue field alone and must NOT appear in the motion prompt.
   if (hasDialogue && !normalize(prompt).includes(normalize(dialogue!))) {
@@ -375,16 +413,19 @@ export function ensureBeatCameraPhysics(motionPrompt: string, sourceBeat: Beat |
 
 const SECONDARY_MOTION_TERMS = /(hair (sway|swing|settle|bounc|whip|flip|mov)|fabric|ripple|jiggle|bounc\w+ (chest|body|curves)|soft[- ]body|inertia|earring|necklace|jewel|apron|skirt (sway|mov)|drape)/i;
 
-/** E.3: every motionPrompt carries secondary motion — REQUIRED non-empty; its absence
- *  is the loudest fixable AI-motion tell. Falls back to a natural default. */
+/** E.3: every motionPrompt carries secondary motion, but AT MOST TWO cues (guide §7):
+ *  stacking secondary-motion descriptions makes video models animate the clothing over
+ *  the person. Hair and fabric are the most natural carriers — the rest emerges. */
 export function ensureSecondaryMotion(motionPrompt: string, sm: SecondaryMotion | undefined): string {
+  if (/Secondary motion:/i.test(motionPrompt)) return motionPrompt;   // marker idempotency (re-enforcement runs)
   if (SECONDARY_MOTION_TERMS.test(motionPrompt)) return motionPrompt;
-  const parts = sm
+  const parts = (sm
     ? [sm.hair, sm.fabric, sm.softBody, sm.accessories].filter((s) => s && !/^(none|n\/a|not clearly visible)/i.test(s.trim()))
-    : [];
+    : []
+  ).slice(0, 2);
   const text = parts.length
     ? parts.join('; ')
-    : 'hair settles naturally after each move, fabric ripples with the motion, natural soft-body inertia through the action';
+    : 'hair moves naturally with her head turns and settles after each move';
   return `${endDot(motionPrompt)} Secondary motion: ${text}.`;
 }
 
@@ -427,9 +468,22 @@ export function ensureMotionCadence(motionPrompt: string): string {
   return `${endDot(motionPrompt)} ${MOTION_CADENCE_TAIL}`;
 }
 
+/** Guide §7: the global natural-idle-behavior block — appended to every a-roll
+ *  motionPrompt (post-append, never competes with the LLM's char budget). It is the
+ *  single highest-leverage anti-freeze/anti-pose addition the guide found. */
+export const IDLE_BEHAVIOR_TAIL =
+  'Natural idle human behavior throughout: occasional blinking, small eye saccades, tiny breathing movement in the shoulders, subtle weight shifts, slight posture adjustments, natural finger relaxation, micro facial movements — no exaggerated expressions, no robotic symmetry, no frozen pose between actions.';
+
+export function ensureIdleBehavior(motionPrompt: string): string {
+  if (/idle human behavior/i.test(motionPrompt)) return motionPrompt;
+  return `${endDot(motionPrompt)} ${IDLE_BEHAVIOR_TAIL}`;
+}
+
 export const KLING_HANDHELD_TAIL = 'handheld phone footage, micro-shake, autofocus breathing, minor framing imperfections';
 export const CDANCE_NEGATION_PAIR = 'no smoothness, no stabilization';
-export const CDANCE_AUDIO_LINE = 'voice sounds like a phone microphone, natural room tone, no BGM';
+// "no music" is the load-bearing override — Seedance's UGC default leans toward a soft
+// BGM bed and responds to the literal phrase "no music" more reliably than "no BGM".
+export const CDANCE_AUDIO_LINE = 'voice sounds like a phone microphone, natural room tone, no music, no BGM';
 export const CDANCE_SUBTITLE_TAIL = 'keep it subtitle-free, avoid generating any text or subtitles, no watermark';
 
 /** Case-insensitively remove a phrase (with optional trailing punctuation) from s. */
@@ -710,6 +764,22 @@ export function ensureNoOnCameraSpeech(motionPrompt: string, dialogue?: string):
   return p;
 }
 
+/** Wardrobe reference-image surfacing (Jul 30 meeting): when the profile maps wardrobe
+ *  keys to garment photos (looks.wardrobeImages — e.g. Keira's _closet/<key>.jpg), resolve
+ *  the ideation's chosen look to its image path so the operator/pipeline can attach it to
+ *  the Seedream/WaveSpeed call alongside the face ref. Text describes the garment; the
+ *  image locks it. The path lives in brief metadata ONLY — never inside a prompt box. */
+export function resolveWardrobeImage(lock: ContinuityLock | undefined, profile: ModelProfile): string | undefined {
+  const images = profile.looks.wardrobeImages;
+  if (!images || !lock) return undefined;
+  if (lock.wardrobeKey && images[lock.wardrobeKey]) return images[lock.wardrobeKey];
+  const hay = `${lock.wardrobeKey ?? ''} ${lock.wardrobeExact}`.toLowerCase();
+  for (const [key, path] of Object.entries(images)) {
+    if (hay.includes(key.toLowerCase())) return path;
+  }
+  return undefined;
+}
+
 /** Fallback continuity lock when the LLM omits one — built from the DNA so clips
  *  still share a set/light/time anchor instead of drifting freely. */
 export function buildDefaultContinuityLock(dna: FormatDna): ContinuityLock {
@@ -839,6 +909,7 @@ export function lintFidelity(ideation: Ideation, dna: FormatDna, mode: FidelityM
 /** Post-process one LLM ideation: enforce every deterministic rule. Returns violations that survived auto-fix. */
 export function enforceIdeation(
   ideation: Ideation, profile: ModelProfile, dna: FormatDna, fidelityMode: FidelityMode = 'adapt',
+  videoModelTarget: VideoModelTarget = 'seedance',
 ): LintViolation[] {
   const violations: LintViolation[] = [];
   const reproduce = fidelityMode === 'reproduce';
@@ -848,6 +919,7 @@ export function enforceIdeation(
     clipCount: ideation.clipCount,
     durationSec: ideation.targetDurationSec,
     emotionalRangeHigh: /emotional|dramatic|reaction/i.test(ideation.angle) && ideation.videoModel.choice === 'cdance_2',
+    target: videoModelTarget,
   });
   if (ideation.videoModel.choice !== ruled.choice) {
     ideation.videoModel = ruled;   // rule engine wins; auditable reason
@@ -893,6 +965,11 @@ export function enforceIdeation(
 
   // A missing continuity lock never kills a run — build a DNA-derived default.
   if (!ideation.continuityLock) ideation.continuityLock = buildDefaultContinuityLock(dna);
+
+  // Wardrobe reference image (Jul 30 meeting): surface the chosen look's garment photo
+  // path in the brief so the operator attaches it to WaveSpeed with the face ref.
+  const wardrobeImage = resolveWardrobeImage(ideation.continuityLock, profile);
+  if (wardrobeImage) ideation.wardrobeImagePath = wardrobeImage;
 
   ideation.beats.forEach((beat, i) => {
     const sourceBeat = pinned && segSources ? segSources[i] : undefined;
@@ -962,6 +1039,10 @@ export function enforceIdeation(
     beat.motionPrompt = broll
       ? beat.motionPrompt   // no face in frame — no blink/gaze injection
       : ensureMicroExpression(beat.motionPrompt, sourceBeat?.framing ?? beat.camera, beat.microExpression);
+    // Guide §7: the idle-behavior block rides every a-roll prompt (b-roll has no
+    // human subject to idle) — AFTER micro-expression so the beat's own micro detail
+    // still lands, BEFORE the cadence tail and per-model position blocks.
+    beat.motionPrompt = broll ? beat.motionPrompt : ensureIdleBehavior(beat.motionPrompt);
     beat.motionPrompt = ensureMotionCadence(beat.motionPrompt);
     beat.motionPrompt = applyModelPositionBlocks(beat.motionPrompt, ideation.videoModel.choice);
     beat.motionPromptCharCount = beat.motionPrompt.length;
