@@ -14,7 +14,9 @@ import {
   needsFaceForwardFix, stripIdentityDescriptors, wrapIdentityLock,
   CDANCE_SUBTITLE_TAIL, KLING_HANDHELD_TAIL,
   ensureIdleBehavior, ensureAmbientSound, ensureStaticCameraDefault, stripBodyWordFull, ensureAccentDelivery,
+  sanitizeImageModeration,
 } from '../worker/src/generate/rules';
+import { BELLE_PROFILE } from '../worker/seeds/profiles';
 import type { Beat, ContinuityLock, FormatDna, Ideation, ModelProfile } from '../shared/contract';
 import { SAV_PROFILE, SEED_PROFILES } from '../worker/seeds/profiles';
 import { FormatDnaSchema, ModelProfileSchema } from '../shared/schemas';
@@ -438,6 +440,15 @@ const houseStyle = lintMotionPrompt(SAV_PROFILE.toolRules.video.confirmedWorking
 check('house-style example still passes the new humanization lint', houseStyle.length === 0, JSON.stringify(houseStyle));
 const negatedTells = lintMotionPrompt('She keeps moving, NOT frozen, no waist-up framing, she never stares at the lens.', SAV_PROFILE, 'MULTI_CLIP', 0);
 check('negated tells pass the humanization lint', !negatedTells.some((x) => /portrait-framing|freeze-word|over-directed/.test(x.problem)), JSON.stringify(negatedTells));
+
+// ── GPT-image-2 moderation-safe sanitizer (§9 / log 19) ──
+const modBelle = sanitizeImageModeration(BELLE_PROFILE.identityLock.closer);
+check('sanitizer removes youth wording from Belle closer', !/youthful|zero signs of aging|early[- ]?20s/i.test(modBelle), modBelle);
+check('sanitizer keeps the face-match lock intact', /Match the uploaded reference image face exactly/i.test(modBelle));
+const modBad = sanitizeImageModeration('A youthful 22-year-old girl in a tight corset with a sweetheart neckline, heavy-lidded sultry gaze.');
+check('sanitizer clears the known trigger stack', !/youthful|\d{2}[- ]?year[- ]?old|\bgirl\b|\btight\b|corset|sweetheart|heavy[- ]lidded|sultry/i.test(modBad), modBad);
+check('sanitizer idempotent', sanitizeImageModeration(modBad) === modBad);
+check('sanitizer does not touch "cowgirl"', /cowgirl/i.test(sanitizeImageModeration('western cowgirl outfit')));
 
 if (failures) { console.error(`\n${failures} FAILURES`); process.exit(1); }
 console.log('\nALL COMPILER TESTS PASS');
