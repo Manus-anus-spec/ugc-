@@ -29,24 +29,38 @@ import {
 import { NEUTRAL_PROFILE } from '../generate/neutral';
 import {
   buildGeneratorInstruction, buildGeneratorRepairPrompt, buildGeneratorUserMessage, buildLintRepairPrompt,
+  buildSynthesisDigest, buildSynthesisUserMessage,
 } from '../generate/prompt';
 
 const IDEATION_COUNT = 3;
 
-const RequestSchema = z.object({
-  formatId: z.string(),
+const RequestBase = z.object({
+  /** Required for reproduce/adapt (single source). For synthesize it's the ANCHOR source —
+   *  optional there; defaults to the first resolved fusion source. */
+  formatId: z.string().optional(),
+  /** synthesize (§10) only: 2–4 library blueprints to fuse. Omit for "surprise me" — the
+   *  server auto-selects the top-scoring, archetype-diverse blueprints. */
+  formatIds: z.array(z.string()).min(2).max(4).optional(),
   /** Omit for the default character-neutral run; pass a profile id to bind identity (optional layer). */
   profileId: z.string().default('neutral'),
   variationStrength: VariationStrengthSchema.default('close'),
-  /** v3: 'reproduce' (default) transplants the source FILMING 1:1 into the profile's
-   *  world; 'adapt' is the classic reinvent-the-surface ideation. */
+  /** v3: 'reproduce' (default) transplants one source's FILMING 1:1; 'adapt' reinvents one
+   *  source's surface; 'synthesize' fuses N blueprints' mechanisms into a NEW format. */
   fidelityMode: FidelityModeSchema.default('reproduce'),
 });
+const requireFormatIdUnlessSynthesize = (d: z.infer<typeof RequestBase>) =>
+  d.fidelityMode === 'synthesize' || !!d.formatId;
+const REQUIRE_MSG = { message: 'formatId is required unless fidelityMode is "synthesize"' };
+const RequestSchema = RequestBase.refine(requireFormatIdUnlessSynthesize, REQUIRE_MSG);
 
-/** Internal per-variant dispatch (SELF binding) — same params plus which variant. */
-const VariantRequestSchema = RequestSchema.extend({
+/** Internal per-variant dispatch (SELF binding) — same params plus which variant.
+ *  Trusted internal caller, so the refine isn't re-applied. */
+const VariantRequestSchema = RequestBase.extend({
   variant: z.number().int().min(0).max(IDEATION_COUNT - 1),
+  /** synthesize: the resolved source set (parent already auto-selected if needed). */
+  resolvedSourceIds: z.array(z.string()).optional(),
 });
+const SYNTHESIS_SOURCE_COUNT = 3;
 
 /** v3: the generator is ASKED for the filming-fidelity fields (prompt), but the
  *  schema stays LENIENT — every omission has a deterministic fill in enforceIdeation
@@ -113,11 +127,11 @@ export async function generate(req: Request, env: Env, ctx: ExecutionContext): P
   if (!parsed.success) {
     return err('invalid_body', 'body must be { formatId, profileId, variationStrength? }', 400, req, env, parsed.error.issues);
   }
-  const { formatId, profileId, variationStrength, fidelityMode } = parsed.data;
+  const { formatId, formatIds, profileId, variationStrength, fidelityMode } = parsed.data;
   // The whole pipeline runs inside waitUntil: a client disconnect (tab closed,
   // page reloaded) can no longer cancel the invocation and orphan a paid Gemini
   // call — the run still completes and lands in D1, recoverable via history.
-  const work = runGeneration(req, env, formatId, profileId, variationStrength, fidelityMode);
+  const work = runGeneration(req, env, formatId, profileId, variationStrength, fidelityMode, formatIds);
   ctx.waitUntil(work.then(() => undefined, () => undefined));
   return work;
 }
@@ -130,10 +144,18 @@ export async function generateVariant(req: Request, env: Env): Promise<Response>
   if (!parsed.success) {
     return err('invalid_body', 'body must be { formatId, profileId, variationStrength, fidelityMode, variant }', 400, req, env, parsed.error.issues);
   }
-  const { formatId, profileId, variationStrength, fidelityMode, variant } = parsed.data;
-  const loaded = await loadFormatAndProfile(req, env, formatId, profileId);
-  if (loaded instanceof Response) return loaded;
+  const { formatId, profileId, variationStrength, fidelityMode, variant, resolvedSourceIds, formatIds } = parsed.data;
   try {
+    if (fidelityMode === 'synthesize') {
+      const ids = resolvedSourceIds ?? formatIds ?? [];
+      const loaded = await loadSynthesisSources(req, env, ids, profileId);
+      if (loaded instanceof Response) return loaded;
+      const result = await runSingleVariant(env, loaded.dnas[0]!, loaded.profile, variationStrength, fidelityMode, variant, loaded.dnas);
+      return json(result, 200, req, env);
+    }
+    if (!formatId) return err('invalid_body', 'formatId is required for reproduce/adapt', 400, req, env);
+    const loaded = await loadFormatAndProfile(req, env, formatId, profileId);
+    if (loaded instanceof Response) return loaded;
     const result = await runSingleVariant(env, loaded.dna, loaded.profile, variationStrength, fidelityMode, variant);
     return json(result, 200, req, env);
   } catch (e) {
@@ -165,6 +187,61 @@ async function loadFormatAndProfile(
   return { dna: JSON.parse(formatRow.dna) as FormatDna, profile, formatVersion: formatRow.current_version };
 }
 
+/** Load just the profile (shared by the single-source and synthesis loaders). */
+async function loadProfile(req: Request, env: Env, profileId: string): Promise<ModelProfile | Response> {
+  if (profileId === 'neutral') return NEUTRAL_PROFILE;
+  const row = await env.DB.prepare('SELECT profile FROM profiles WHERE id = ?').bind(profileId).first<{ profile: string }>();
+  if (!row) return err('not_found', `profile ${profileId} not found`, 404, req, env);
+  return ModelProfileSchema.parse(JSON.parse(row.profile)) as ModelProfile;
+}
+
+/** §10 "surprise me" retrieval: top-scoring blueprint ids, biased for ARCHETYPE DIVERSITY
+ *  (fuse different mechanisms, not N near-duplicates). Falls back to pure score to fill N. */
+async function selectTopFormatIds(env: Env, n: number): Promise<string[]> {
+  const { results } = await env.DB.prepare(
+    `SELECT id, format_type FROM formats
+     WHERE schema_version != '0-legacy' AND virality_score IS NOT NULL
+     ORDER BY virality_score DESC LIMIT 24`,
+  ).all<{ id: string; format_type: string | null }>();
+  const seenType = new Set<string>();
+  const picked: string[] = [];
+  for (const r of results) {           // pass 1: one per distinct archetype, highest-scoring first
+    const t = r.format_type ?? '?';
+    if (!seenType.has(t)) { seenType.add(t); picked.push(r.id); if (picked.length >= n) return picked; }
+  }
+  for (const r of results) {           // pass 2: fill remaining by score
+    if (picked.length >= n) break;
+    if (!picked.includes(r.id)) picked.push(r.id);
+  }
+  return picked;
+}
+
+type SynthesisLoaded = { dnas: FormatDna[]; profile: ModelProfile; sourceIds: string[]; anchorVersion: number };
+
+/** §10 synthesis loader: N source DNAs + profile. dnas[0] is the anchor (supplies aesthetic
+ *  defaults downstream). Skips missing/legacy sources; needs ≥2 valid to fuse. */
+async function loadSynthesisSources(
+  req: Request, env: Env, sourceIds: string[], profileId: string,
+): Promise<SynthesisLoaded | Response> {
+  const profile = await loadProfile(req, env, profileId);
+  if (profile instanceof Response) return profile;
+  const dnas: FormatDna[] = [];
+  const kept: string[] = [];
+  let anchorVersion = 1;
+  for (const id of sourceIds) {
+    const row = await env.DB.prepare('SELECT dna, current_version, schema_version FROM formats WHERE id = ?')
+      .bind(id).first<{ dna: string; current_version: number; schema_version: string }>();
+    if (!row || row.schema_version === '0-legacy') continue;
+    dnas.push(JSON.parse(row.dna) as FormatDna);
+    kept.push(id);
+    if (kept.length === 1) anchorVersion = row.current_version;
+  }
+  if (dnas.length < 2) {
+    return err('synthesis_insufficient_sources', 'need at least 2 valid (non-legacy) source formats to synthesize', 422, req, env);
+  }
+  return { dnas, profile, sourceIds: kept, anchorVersion };
+}
+
 /** One ideation variant: sanitize inputs, one creative call (with input-block
  *  escalation + key failover), one schema repair, deterministic enforcement + one
  *  targeted rewrite. Throws InputBlocked / GeminiQuotaError / Error. */
@@ -172,6 +249,7 @@ async function runSingleVariant(
   env: Env, dna: FormatDna, profile: ModelProfile,
   variationStrength: z.infer<typeof VariationStrengthSchema>,
   fidelityMode: FidelityMode, variant: number,
+  sources?: FormatDna[],   // §10 synthesize: the N fusion sources (dna is the anchor = sources[0])
 ): Promise<VariantResult> {
   // ── Layer 1 (pre): sanitize the LLM input; stored DNA keeps raw observations.
   // Universal map runs AFTER the profile map as the safety net — Gemini's input
@@ -186,11 +264,18 @@ async function runSingleVariant(
     identityLock: { ...profile.identityLock, strippedDescriptors: [] },
   };
   const profileJson = applyUniversalSanitize(JSON.stringify(profileForLlm, null, 1));
-  const userMessage = buildGeneratorUserMessage(dnaForLlm, profileJson);
+  // §10 synthesize: the LLM sees a MECHANISM DIGEST of the N sources (no concrete detail),
+  // not one full DNA — so it must invent all surface. Both escalation tiers use the same
+  // (already tame) digest; the model-fallback tier still applies.
+  const synth = fidelityMode === 'synthesize' && !!sources && sources.length >= 2;
+  const synthMessage = synth
+    ? buildSynthesisUserMessage(applyUniversalSanitize(applySanitizeMap(buildSynthesisDigest(sources!), profile)), profileJson)
+    : '';
+  const userMessage = synth ? synthMessage : buildGeneratorUserMessage(dnaForLlm, profileJson);
   const hardDnaJson = applyUniversalSanitize(
     applySanitizeMap(JSON.stringify(hardStripNsfwForLlm(dna), null, 1), profile),
   );
-  const hardUserMessage = buildGeneratorUserMessage(hardDnaJson, profileJson);
+  const hardUserMessage = synth ? synthMessage : buildGeneratorUserMessage(hardDnaJson, profileJson);
 
   // v3.3: precompute the segment plan — the LLM follows it, never invents grouping.
   const segments = fidelityMode === 'reproduce' ? planSegments(dna.beats) : null;
@@ -285,28 +370,45 @@ async function runSingleVariant(
 }
 
 async function runGeneration(
-  req: Request, env: Env, formatId: string, profileId: string,
+  req: Request, env: Env, formatId: string | undefined, profileId: string,
   variationStrength: z.infer<typeof VariationStrengthSchema>,
-  fidelityMode: FidelityMode,
+  fidelityMode: FidelityMode, formatIds?: string[],
 ): Promise<Response> {
 
   // ── Load + validate up front (cheap): 404/422 before any variant is dispatched ──
-  const loaded = await loadFormatAndProfile(req, env, formatId, profileId);
-  if (loaded instanceof Response) return loaded;
-  const { dna, profile, formatVersion } = loaded;
+  let dna: FormatDna;
+  let profile: ModelProfile;
+  let formatVersion: number;
+  let effectiveFormatId: string;
+  let sourceIds: string[] | undefined;      // synthesize only — the fused blueprint set
+  let sources: FormatDna[] | undefined;     // synthesize only — inline-fallback fusion sources
+  if (fidelityMode === 'synthesize') {
+    // "surprise me" = no explicit sources → auto-select top-scoring, archetype-diverse.
+    const ids = formatIds ?? await selectTopFormatIds(env, SYNTHESIS_SOURCE_COUNT);
+    const s = await loadSynthesisSources(req, env, ids, profileId);
+    if (s instanceof Response) return s;
+    dna = s.dnas[0]!; profile = s.profile; formatVersion = s.anchorVersion;
+    effectiveFormatId = s.sourceIds[0]!; sourceIds = s.sourceIds; sources = s.dnas;
+  } else {
+    if (!formatId) return err('invalid_body', 'formatId is required for reproduce/adapt', 400, req, env);
+    const loaded = await loadFormatAndProfile(req, env, formatId, profileId);
+    if (loaded instanceof Response) return loaded;
+    dna = loaded.dna; profile = loaded.profile; formatVersion = loaded.formatVersion;
+    effectiveFormatId = formatId;
+  }
 
   // ── Layer 2: one call per ideation, run in PARALLEL — each in its OWN invocation
   // via the SELF binding (own CPU budget; see header comment). Inline fallback keeps
   // `wrangler dev` working without the binding.
   const dispatchVariant = async (variant: number): Promise<VariantResult> => {
-    if (!env.SELF) return runSingleVariant(env, dna, profile, variationStrength, fidelityMode, variant);
+    if (!env.SELF) return runSingleVariant(env, dna, profile, variationStrength, fidelityMode, variant, sources);
     const res = await env.SELF.fetch('https://ugc-api.internal/generate/variant', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-API-Key': req.headers.get('X-API-Key') ?? '',
       },
-      body: JSON.stringify({ formatId, profileId, variationStrength, fidelityMode, variant }),
+      body: JSON.stringify({ formatId: effectiveFormatId, profileId, variationStrength, fidelityMode, variant, resolvedSourceIds: sourceIds }),
     });
     const body = await res.json().catch(() => null) as
       | (VariantResult & { error?: undefined; code?: undefined })
@@ -352,12 +454,13 @@ async function runGeneration(
   const run: GenerationRun = {
     schemaVersion: 1,
     id: newId(),
-    formatId,
+    formatId: effectiveFormatId,
     formatVersion,
     profileId,
     profileVersion: profile.version,
     variationStrength,
     fidelityMode,
+    ...(sourceIds ? { sourceFormatIds: sourceIds } : {}),
     formulaExtracted: output.data.formulaExtracted,
     ideations: output.data.ideations.map((i, idx) => ({ ...i, index: idx })),
     createdAt: now,
@@ -367,7 +470,7 @@ async function runGeneration(
   await env.DB.prepare(
     `INSERT INTO generations (id, format_id, format_version, profile_id, profile_version,
        variation_strength, status, output, created_at) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)`
-  ).bind(run.id, formatId, run.formatVersion, profileId, run.profileVersion, variationStrength,
+  ).bind(run.id, effectiveFormatId, run.formatVersion, profileId, run.profileVersion, variationStrength,
     JSON.stringify(run), now).run();
 
   return json(run, 200, req, env);

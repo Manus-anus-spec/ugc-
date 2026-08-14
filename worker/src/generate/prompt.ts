@@ -32,13 +32,30 @@ ${segmentPlan}` : `- Every ideation has EXACTLY ${unitCount} beats — one per s
 - The ${ideationCount} ideations differ ONLY in the scenario mapping (which whitelist location, which wardrobe key, what the dialogue/text says). The filming — timing, shots, cuts, motion — is IDENTICAL across all of them. Variation strength is ignored in reproduce mode.
 - keptFromOriginal = the filming elements carried verbatim; reinvented = the surface you swapped (location/wardrobe/dialogue).`;
 
+const SYNTHESIZE_DIRECTIVE = (ideationCount: number) => `# THE PRIME DIRECTIVE — SYNTHESIZE A NEW FORMAT (learn from the library, don't copy)
+You are given SEVERAL proven viral blueprints (their MECHANISMS only — hook type, beat structure, emotional turn, retention drivers, why each went viral). Your job is NOT to reproduce or adapt any single one. INVENT ONE genuinely-new format that FUSES their mechanisms into something fresh for THIS profile.
+- Pick the single strongest scroll-stop HOOK mechanism as the spine — ONE clear hook, never a Frankenstein of four.
+- Borrow the BEAT STRUCTURE / escalation from a different source, the EMOTIONAL TURN / payoff from another, and retention drivers from across the set.
+- SWAP EVERY concrete detail — identity, location (profile whitelist), wardrobe (profile palette), scenario, props, and dialogue (profile voice + accent) are all NEW inventions. Nothing recognizably lifted from any source.
+- Success test: a viewer who has seen all the sources cannot point to which one this came from — it reads as a NEW idea that stops the scroll via a proven mechanism COMBINATION.
+- For each ideation: keptFromOriginal = which mechanism you took from which source (name them, for traceability); reinvented = the fresh surface you invented.
+The ${ideationCount} ideations must be genuinely DIFFERENT fusions (a different hook-spine or a different scenario), not paraphrases. Variation strength is ignored in synthesize mode.`;
+
 export function buildGeneratorInstruction(
   profile: ModelProfile, strength: VariationStrength, ideationCount: number,
   fidelityMode: FidelityMode, sourceBeatCount: number, segmentPlan?: string,
 ): string {
-  return `You are a content ${fidelityMode === 'reproduce' ? 'FILMING-REPRODUCTION' : 'IDEATION'} and production engine for AI-generated short-form video. You receive a viral video's FORMAT DNA (a structured blueprint of why it worked) and a MODEL PROFILE (the creator identity and world to produce for). You output ${ideationCount} DISTINCT ideations as one JSON object matching the provided schema.
+  const engineKind = fidelityMode === 'reproduce' ? 'FILMING-REPRODUCTION'
+    : fidelityMode === 'synthesize' ? 'CROSS-LIBRARY SYNTHESIS' : 'IDEATION';
+  const inputKind = fidelityMode === 'synthesize'
+    ? 'SEVERAL viral blueprints (mechanism digests)'
+    : "a viral video's FORMAT DNA (a structured blueprint of why it worked)";
+  const directive = fidelityMode === 'reproduce' ? REPRODUCE_DIRECTIVE(ideationCount, sourceBeatCount, segmentPlan)
+    : fidelityMode === 'synthesize' ? SYNTHESIZE_DIRECTIVE(ideationCount)
+      : ADAPT_DIRECTIVE(strength, ideationCount);
+  return `You are a content ${engineKind} and production engine for AI-generated short-form video. You receive ${inputKind} and a MODEL PROFILE (the creator identity and world to produce for). You output ${ideationCount} DISTINCT ideations as one JSON object matching the provided schema.
 
-${fidelityMode === 'reproduce' ? REPRODUCE_DIRECTIVE(ideationCount, sourceBeatCount, segmentPlan) : ADAPT_DIRECTIVE(strength, ideationCount)}
+${directive}
 
 ${profile.id === 'neutral' ? `# CHARACTER-NEUTRAL MODE (this run)
 This run is bound to NO creator. The output must be usable by ANY model with ANY reference image:
@@ -172,6 +189,36 @@ MODEL PROFILE (the law — all identity, world, voice, and tool rules):
 ${profileJson}
 
 Produce the ideations now.`;
+}
+
+/** Synthesize mode (FABLE5 §10): compress N source blueprints to their MECHANISMS only —
+ *  no concrete scene/wardrobe/dialogue detail leaks in, so the LLM must invent fresh surface.
+ *  Uses FormatDna fields defensively (old rows may lack v3 fields). */
+export function buildSynthesisDigest(dnas: import('../../../shared/contract').FormatDna[]): string {
+  return dnas.map((d, i) => {
+    const wiw = d.whyItWorks;
+    const v = d.virality;
+    return [
+      `SOURCE ${i + 1} — "${d.title ?? 'untitled'}" [${d.formatType ?? d.archetype ?? 'other'}]${v?.overall != null ? ` (virality ${Math.round(v.overall)})` : ''}`,
+      `  hook: ${d.hook?.type ?? '?'} — ${d.hook?.mechanism ?? d.hook?.openingVisual ?? '?'}`,
+      `  why it works: ${wiw?.mechanism ?? '?'}`,
+      wiw?.retentionDrivers?.length ? `  retention drivers: ${wiw.retentionDrivers.join('; ')}` : '',
+      `  beat structure: ${d.beats?.length ?? '?'} beats, ${d.pacing?.rhythm ?? d.pacing?.energy ?? 'rhythm n/a'}`,
+      v?.strengths?.length ? `  what made it viral: ${v.strengths.join('; ')}` : '',
+      wiw?.targetViewer ? `  target viewer: ${wiw.targetViewer}` : '',
+    ].filter(Boolean).join('\n');
+  }).join('\n\n');
+}
+
+/** User message for synthesize mode: the mechanism digest (not a single full DNA) + profile. */
+export function buildSynthesisUserMessage(digest: string, profileJson: string): string {
+  return `LIBRARY BLUEPRINTS TO FUSE (mechanisms only — invent ALL concrete detail fresh):
+${digest}
+
+MODEL PROFILE (the law — all identity, world, voice, and tool rules):
+${profileJson}
+
+Synthesize the ideations now — fuse the mechanisms above into ONE new format, copy no concrete detail.`;
 }
 
 /** Repair prompt for schema-validation failures (one retry, then typed error). */

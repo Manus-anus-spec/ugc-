@@ -35,7 +35,10 @@ export const ShotSizeSchema = z.enum(['ECU', 'CU', 'MS', 'WS']);
 export const ShotTypeSchema = z.enum(['aroll', 'broll']);
 export const CameraAngleSchema = z.enum(['eye', 'low', 'high', 'overhead', 'pov']);
 export const CutTransitionSchema = z.enum(['hard', 'match', 'whip', 'jump']);
-export const FidelityModeSchema = z.enum(['reproduce', 'adapt']);
+// 'reproduce' = transplant one source's filming 1:1; 'adapt' = reinvent one source's surface;
+// 'synthesize' (FABLE5 §10) = fuse the MECHANISMS of N high-scoring library blueprints into ONE
+// genuinely-new format (the "fresh video" / surprise-me engine), copying no concrete detail.
+export const FidelityModeSchema = z.enum(['reproduce', 'adapt', 'synthesize']);
 export const FirstFrameSourceSchema = z.enum(['hero_still', 'prev_clip_last_frame', 'fresh_nb']);
 
 /** Reproducible camera-real "tells", constrained so each maps to a canned NB token +
@@ -698,7 +701,9 @@ export const GenerationRunSchema = z.object({
   profileId: z.string(),
   profileVersion: z.number().int(),
   variationStrength: VariationStrengthSchema,  // close-but-fresh (default) → bold
-  fidelityMode: FidelityModeSchema.optional(),  // v3 — 'reproduce' (default) | 'adapt'; optional for old rows
+  fidelityMode: FidelityModeSchema.optional(),  // v3 — 'reproduce' (default) | 'adapt' | 'synthesize'; optional for old rows
+  // synthesize mode: the library blueprints whose mechanisms were fused (formatId is the primary/anchor).
+  sourceFormatIds: z.array(z.string()).optional(),
   formulaExtracted: z.string(),     // the format's formula, shared across ideations
   ideations: z.array(IdeationSchema),
   createdAt: z.string(),

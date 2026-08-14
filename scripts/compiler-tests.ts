@@ -17,6 +17,7 @@ import {
   sanitizeImageModeration,
 } from '../worker/src/generate/rules';
 import { BELLE_PROFILE } from '../worker/seeds/profiles';
+import { buildSynthesisDigest } from '../worker/src/generate/prompt';
 import type { Beat, ContinuityLock, FormatDna, Ideation, ModelProfile } from '../shared/contract';
 import { SAV_PROFILE, SEED_PROFILES } from '../worker/seeds/profiles';
 import { FormatDnaSchema, ModelProfileSchema } from '../shared/schemas';
@@ -456,6 +457,18 @@ const modBad = sanitizeImageModeration('A youthful 22-year-old girl in a tight c
 check('sanitizer clears the known trigger stack', !/youthful|\d{2}[- ]?year[- ]?old|\bgirl\b|\btight\b|corset|sweetheart|heavy[- ]lidded|sultry/i.test(modBad), modBad);
 check('sanitizer idempotent', sanitizeImageModeration(modBad) === modBad);
 check('sanitizer does not touch "cowgirl"', /cowgirl/i.test(sanitizeImageModeration('western cowgirl outfit')));
+
+// ── §10 synthesis digest (mechanisms only — no concrete scene detail leaks) ──
+const srcA = { title: 'Taco freeze', formatType: 'skit', hook: { type: 'visual', mechanism: 'freeze at 0:02' },
+  whyItWorks: { mechanism: 'curiosity gap', retentionDrivers: ['await the unfreeze'], targetViewer: 'foodies' },
+  beats: [{}, {}, {}], pacing: { rhythm: 'fast cuts' }, virality: { overall: 72, strengths: ['scroll-stop freeze'] } } as unknown as import('../shared/contract').FormatDna;
+const srcB = { title: 'Ranch reveal', formatType: 'outfit_showcase', hook: { type: 'visual', mechanism: 'walk-in reveal' },
+  whyItWorks: { mechanism: 'aspirational reveal', retentionDrivers: ['payoff at end'], targetViewer: 'lifestyle' },
+  beats: [{}, {}], pacing: { rhythm: 'single take' }, virality: { overall: 65, strengths: ['clean reveal'] } } as unknown as import('../shared/contract').FormatDna;
+const digest = buildSynthesisDigest([srcA, srcB]);
+check('digest names both sources', /Taco freeze/.test(digest) && /Ranch reveal/.test(digest), digest);
+check('digest carries mechanisms + virality strengths', /freeze at 0:02/.test(digest) && /scroll-stop freeze/.test(digest), digest);
+check('digest tags archetype + score', /\[skit\]/.test(digest) && /virality 72/.test(digest), digest);
 
 if (failures) { console.error(`\n${failures} FAILURES`); process.exit(1); }
 console.log('\nALL COMPILER TESTS PASS');
