@@ -78,4 +78,76 @@ creator briefing another before filming, it's right.
 - Cinematizer lint: positive "cinematic/bokeh/film grain/…" fails the run (allowed
   only inside NOT/no negations).
 - nbPrompt instruction bakes grade + realismMarkers into the first frame.
-- Char budget: multi-clip 550 (750 with dialogue), one-shot 1200.
+- Char budget: multi-clip 900 (1100 with dialogue), one-shot 1400 (reproduce +200).
+
+## FABLE5 humanization layer (2026-08-14) — makes prompts read HUMAN by default
+
+The engine now enforces the 11-principle humanization guide
+(`~/Downloads/AI_Video_Prompting_Claude vs Gpt.docx`) so the operator no longer
+hand-fixes prompts in ChatGPT. Split across the two layers:
+
+**Taught in the instruction (`prompt.ts` HUMANIZATION LAWS)** — reaction-not-prescription
+(never name an expression; let it emerge), freeze→continuation (no dead frames),
+bystander sequences (notice→glance→look away, never "staring"), hands-need-a-reason,
+continuous flow (beats reference the previous beat), background alive-but-secondary,
+anti-portrait framing with numbers (~35–45%, room visible, chest-height, slight downward
+tilt), and — ADAPT mode only — an establishing beat 0 + a text-overlay hook (REPRODUCE
+mode keeps 1:1 filming fidelity, so the hook rides the overlay, not a new beat).
+
+**Enforced deterministically (`rules.ts`, post-LLM, additive + idempotent)** —
+`ensureIdleBehavior` (blinking/weight-shifts/relaxed hands/no-frozen-pose),
+`ensureAmbientSound` (location-derived: bar=murmur/clinks, ranch=birds/breeze,
+diner=utensils…), `ensureStaticCameraDefault` (see below), `ensureSecondaryMotion`
+capped at **1–2 cues** (too many animate the clothing over the person),
+`ensureAccentDelivery` (`profile.voice.accent` on every on-camera line), and
+`stripBodyWordFull` on the SD pass (§3 below).
+
+**Enforced by lint (fails → one-rewrite loop, negation-aware)** — portrait-framing terms
+("waist-up"/"front angle"/"fills 60%"), freeze verbs ("stares at"/"holds still"/
+"maintains eye contact"), and over-directed expression labels ("pure disgust"/"confident
+smirk"/…). Conservative lists, verified against the guide's gold-standard AFTER + the
+house `confirmedWorkingExamples` so they never flag a good prompt.
+
+### §2 CINEMATIC-vs-HANDHELD classifier (the "how do we identify it" table)
+
+Default every clip to **static amateur phone**. A camera MOVE is allowed ONLY when the
+SOURCE genuinely had one (reproduce). Lint/rewrite the left column; force the right.
+
+| CINEMATIC (ban / rewrite)                                   | iPhone / SNAPCHAT HANDHELD (force)                         |
+|-------------------------------------------------------------|-----------------------------------------------------------|
+| pan, tilt, push-in, dolly, crane, orbit, glide, track, zoom | static, locked-off, micro-shake only                      |
+| smooth, stabilized, gimbal                                  | "no smoothness, no stabilization" (load-bearing, Seedance)|
+| shallow depth of field, bokeh, blurred background           | deep focus, everything in focus, cluttered real background|
+| dramatic/moody/golden-hour glow, rim light                  | flat natural lighting, natural daylight, harsh overhead   |
+| symmetrical / centered / composed framing                   | off-center, subject ~35–45%, imperfect headroom, slight tilt |
+| 4K/8K/HDR, film grain, 35mm, anamorphic, slow-motion        | vertical 9:16, natural 30fps phone motion blur, raw/candid|
+| eye-level hero framing                                      | chest/shoulder height, slight 5–10° downward tilt         |
+
+`ensureStaticCameraDefault` appends *"Static handheld, only natural micro-shake — no
+pans, no tilts, no zooms, no push-ins"* to any beat with no camera-move verb and no
+static declaration. To "reveal" something, cut to a **separate static insert clip** —
+never tilt/pan to it (§2B).
+
+### §6 Seedance 2.0 is the PRIMARY target
+
+`chooseVideoModel` now defaults every ideation to `cdance_2` (Seedance 2.0) — ≤15s clips,
+stitched multi-clip in the edit. `kling_3` stays a fully-supported fallback seam (pass
+`preferKling`; all Kling code paths — trailing camera block, dialogue label — remain live).
+**Timing:** Seedance parses hard "0.0-0.9s:" timestamps as unstable, so reproduce-mode
+multi-beat takes now carry a **phase-word** internal timeline ("First … then … finally …");
+the exact per-beat trim seconds live in `editPlan.clips[].slices` (computed deterministically
+from the source) and are applied when the take is chopped — fidelity kept in the edit.
+
+### §3 "full" body-word ban
+
+The word "full" over-amplifies Seedream ("full bust/hips/thighs" dramatizes the body).
+Removed from all seed `sd.frameTypeTemplates` and stripped from every generated `sdPrompt`
+(`stripBodyWordFull`) → "natural/curvy/shapely/soft" + "realistic proportions, NOT
+exaggerated". "full body/frame/length" (framing) is preserved.
+
+### §4 per-profile data
+
+`voice.accent` (spoken-delivery descriptor) injected into every on-camera line. Wardrobe
+palette rotation + distinct-location spreading across the 3 variants ride the per-variant
+`VARIANT_HINTS` (variants are independent invocations, so diversity is instruction-driven,
+not cross-variant state).

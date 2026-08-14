@@ -35,7 +35,10 @@ export const ShotSizeSchema = z.enum(['ECU', 'CU', 'MS', 'WS']);
 export const ShotTypeSchema = z.enum(['aroll', 'broll']);
 export const CameraAngleSchema = z.enum(['eye', 'low', 'high', 'overhead', 'pov']);
 export const CutTransitionSchema = z.enum(['hard', 'match', 'whip', 'jump']);
-export const FidelityModeSchema = z.enum(['reproduce', 'adapt']);
+// 'reproduce' = transplant one source's filming 1:1; 'adapt' = reinvent one source's surface;
+// 'synthesize' (FABLE5 §10) = fuse the MECHANISMS of N high-scoring library blueprints into ONE
+// genuinely-new format (the "fresh video" / surprise-me engine), copying no concrete detail.
+export const FidelityModeSchema = z.enum(['reproduce', 'adapt', 'synthesize']);
 export const FirstFrameSourceSchema = z.enum(['hero_still', 'prev_clip_last_frame', 'fresh_nb']);
 
 /** Reproducible camera-real "tells", constrained so each maps to a canned NB token +
@@ -47,7 +50,10 @@ export const RealismTellSchema = z.enum([
 ]);
 
 /** What moves BESIDES the subject's primary action — hair/fabric/soft-tissue/jewelry
- *  inertia. Its absence is the loudest fixable AI-motion tell in generated video. */
+ *  inertia. A generated beat wants 1–2 NATURAL secondary cues (e.g. hair on a head-turn,
+ *  fabric on a weight-shift) — NOT all four. Too many cues make video models animate the
+ *  clothing/accessories over the person (FABLE5 humanization, guide §7). The analyzer may
+ *  observe all four; the generator caps to the 1–2 most natural (rules.ts ensureSecondaryMotion). */
 export const SecondaryMotionSchema = z.object({
   hair: z.string(),          // "hair swings forward as she leans, settles over ~0.5s" | "tied back, static"
   fabric: z.string(),        // "apron ripples with each arm move" | "rigid denim, minimal"
@@ -493,6 +499,10 @@ export const ModelProfileSchema = z.object({
     exampleOverlays: z.array(z.string()),
     bannedWords: z.array(z.string()),
     hashtagPool: z.array(z.string()).optional(),
+    // Spoken-delivery accent injected into every on-camera dialogue line so she doesn't
+    // sound generic (FABLE5 §4.3). e.g. "soft warm Texas drawl, not theatrical". Optional
+    // so pre-accent D1 profiles keep parsing; omitted → no accent clause is added.
+    accent: z.string().optional(),
   }),
   toolRules: z.object({             // per-tool prompt-compiler config
     nb: z.object({
@@ -691,7 +701,9 @@ export const GenerationRunSchema = z.object({
   profileId: z.string(),
   profileVersion: z.number().int(),
   variationStrength: VariationStrengthSchema,  // close-but-fresh (default) → bold
-  fidelityMode: FidelityModeSchema.optional(),  // v3 — 'reproduce' (default) | 'adapt'; optional for old rows
+  fidelityMode: FidelityModeSchema.optional(),  // v3 — 'reproduce' (default) | 'adapt' | 'synthesize'; optional for old rows
+  // synthesize mode: the library blueprints whose mechanisms were fused (formatId is the primary/anchor).
+  sourceFormatIds: z.array(z.string()).optional(),
   formulaExtracted: z.string(),     // the format's formula, shared across ideations
   ideations: z.array(IdeationSchema),
   createdAt: z.string(),

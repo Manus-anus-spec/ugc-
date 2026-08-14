@@ -94,6 +94,8 @@ export const SAV_PROFILE: ModelProfile = {
       'getting ready for plans i will cancel in 20 minutes',
     ],
     bannedWords: ['babe', 'hun', 'bb'],
+    // FABLE5 §4.3 — injected into every on-camera dialogue line. DRAFT for Khian's review.
+    accent: 'soft neutral American accent, warm and relaxed, conversational — not theatrical',
   },
   toolRules: {
     nb: {
@@ -110,9 +112,11 @@ export const SAV_PROFILE: ModelProfile = {
     sd: {
       mandatory: true,
       frameTypeTemplates: {
-        FULL_FRONT: 'Fill the [clothing] with her natural curves — defined narrow waist with visible indent, toned midsection, naturally full upper body proportions, soft full thighs. Keep face and [background].',
-        FULL_SIDE: 'S-curve silhouette with natural proportions — defined waist, natural full curves in profile. Keep face and background.',
-        BACK: 'Natural full lower-body proportions with defined waist from behind. Keep hair and background.',
+        // "full" removed everywhere (FABLE5 §3 — the word over-amplifies Seedream: "full bust/hips/thighs"
+        // dramatizes the body; natural/curvy/shapely/soft + "realistic proportions" corrects it every time).
+        FULL_FRONT: 'Shape the [clothing] to her natural curves — defined narrow waist with a visible indent, toned midsection, naturally curvy upper-body proportions, soft shapely thighs. Realistic proportions, NOT exaggerated, NOT distorted. Keep face and [background].',
+        FULL_SIDE: 'S-curve silhouette with natural proportions — defined waist, natural curves in profile, realistic and not exaggerated. Keep face and background.',
+        BACK: 'Natural curvy lower-body proportions with a defined waist from behind, realistic and not exaggerated. Keep hair and background.',
         UPPER_BODY: 'Proportional natural enhancement of the upper body only — keep face, hair, and background exactly.',
         HEAD_SHOULDERS: 'Enhance skin to natural warm tone. Keep face, hair, and background.',
         UNIFORM: 'Waist definition only, expressed through the uniform fabric fit. Keep face and background.',
@@ -224,6 +228,8 @@ export const BELLE_PROFILE: ModelProfile = {
       'got my horse my dog n mamas cookin what do i need a man for',
     ],
     bannedWords: ['babe', 'hun', 'bb'],
+    // FABLE5 §4.3 — injected into every on-camera dialogue line. DRAFT for Khian's review.
+    accent: 'soft warm Texas drawl, unhurried and natural — not theatrical, not a caricature',
   },
   contentPolicy: {
     nsfwAllowed: false,   // SFW IG account for now (pivot: NSFW/Telegram later)

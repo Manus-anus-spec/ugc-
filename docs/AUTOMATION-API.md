@@ -45,7 +45,19 @@ curl -s -X POST "$UGC_API/generate" -H "X-API-Key: $UGC_KEY" -H 'Content-Type: a
 # For a specific model — her world, voice, and Seedream body pass:
 curl -s -X POST "$UGC_API/generate" -H "X-API-Key: $UGC_KEY" -H 'Content-Type: application/json' \
   -d '{"formatId":"<id>","profileId":"sav","variationStrength":"medium"}'
+
+# SYNTHESIZE (§10 — the "fresh video" engine): fuse the MECHANISMS of several library
+# blueprints into a NEW format (copies no concrete detail). Pass 2–4 source ids:
+curl -s -X POST "$UGC_API/generate" -H "X-API-Key: $UGC_KEY" -H 'Content-Type: application/json' \
+  -d '{"fidelityMode":"synthesize","formatIds":["<id1>","<id2>","<id3>"],"profileId":"belle"}'
+
+# "SURPRISE ME": omit formatIds — the server auto-selects the top-scoring, archetype-diverse
+# blueprints from the whole library and invents something fresh:
+curl -s -X POST "$UGC_API/generate" -H "X-API-Key: $UGC_KEY" -H 'Content-Type: application/json' \
+  -d '{"fidelityMode":"synthesize","profileId":"belle"}'
 ```
+The GenerationRun records `sourceFormatIds` (which blueprints were fused); each ideation's
+`keptFromOriginal` names which mechanism came from which source.
 
 Returns a `GenerationRun`: 3 ideations, each with a brutal `virality` forecast,
 per-beat `nbPrompt` / `sdPrompt` / **self-contained** `motionPrompt` (dialogue,

@@ -78,6 +78,16 @@ export function generateIdeations(
   });
 }
 
+/** §10 "surprise me" — synthesize a NEW format by fusing the mechanisms of several library
+ *  blueprints. Omit formatIds to auto-select the top-scoring, archetype-diverse sources. */
+export function synthesizeIdeations(profileId?: string, formatIds?: string[]): Promise<GenerationRun> {
+  return apiFetch('/generate', {
+    method: 'POST',
+    json: { fidelityMode: 'synthesize', ...(profileId ? { profileId } : {}), ...(formatIds?.length ? { formatIds } : {}) },
+    timeoutMs: 570_000,
+  });
+}
+
 export function listGenerations(formatId: string): Promise<{
   items: { id: string; profileId: string; variationStrength: string; status: string; createdAt: string }[];
 }> {
