@@ -13,6 +13,7 @@ import {
   lintFidelity, lintMotionPrompt, lintNbPrompt, lintPlasticTells, motionCharCap,
   needsFaceForwardFix, stripIdentityDescriptors, wrapIdentityLock,
   CDANCE_SUBTITLE_TAIL, KLING_HANDHELD_TAIL,
+  ensureIdleBehavior, ensureAmbientSound, ensureStaticCameraDefault, stripBodyWordFull, ensureAccentDelivery,
 } from '../worker/src/generate/rules';
 import type { Beat, ContinuityLock, FormatDna, Ideation, ModelProfile } from '../shared/contract';
 import { SAV_PROFILE, SEED_PROFILES } from '../worker/seeds/profiles';
@@ -34,7 +35,9 @@ for (const p of SEED_PROFILES) {
 check('dialogue → cdance', chooseVideoModel({ hasDialogue: true, clipCount: 1, durationSec: 8, emotionalRangeHigh: false }).choice === 'cdance_2');
 check('multi-clip → cdance', chooseVideoModel({ hasDialogue: false, clipCount: 3, durationSec: 15, emotionalRangeHigh: false }).choice === 'cdance_2');
 check('emotional → cdance', chooseVideoModel({ hasDialogue: false, clipCount: 1, durationSec: 8, emotionalRangeHigh: true }).choice === 'cdance_2');
-check('simple one-shot → kling', chooseVideoModel({ hasDialogue: false, clipCount: 1, durationSec: 8, emotionalRangeHigh: false }).choice === 'kling_3');
+// FABLE5 §6: Seedance 2.0 (cdance_2) is now the PRIMARY target — default for everything.
+check('simple one-shot → seedance primary', chooseVideoModel({ hasDialogue: false, clipCount: 1, durationSec: 8, emotionalRangeHigh: false }).choice === 'cdance_2');
+check('kling reachable as fallback seam', chooseVideoModel({ hasDialogue: false, clipCount: 1, durationSec: 8, emotionalRangeHigh: false, preferKling: true }).choice === 'kling_3');
 
 // ── face-forward detection ──
 const dnaFacingAway = {
@@ -182,7 +185,9 @@ const withSm = ensureSecondaryMotion(noSm, SRC_BEAT.secondaryMotion);
 check('secondary motion injected from beat', withSm.includes('hair swings forward') && withSm.includes('apron ripples'), withSm);
 check('secondary motion idempotent', ensureSecondaryMotion(withSm, SRC_BEAT.secondaryMotion) === withSm);
 const defaulted = ensureSecondaryMotion(noSm, undefined);
-check('secondary motion REQUIRED — default injected when beat has none', /Secondary motion:/.test(defaulted), defaulted);
+check('secondary motion default injected when beat has none', /Secondary motion/.test(defaulted), defaulted);
+// FABLE5 §7: cap at 1–2 cues — the default must never stack more than two clauses.
+check('secondary motion default capped at ≤2 cues', (defaulted.split('Secondary motion')[1]?.split(/[;,]/).length ?? 0) <= 2, defaulted);
 const alreadySm = 'Her hair swings as she spins, skirt sways with the turn.';
 check('secondary motion untouched when present', ensureSecondaryMotion(alreadySm, SRC_BEAT.secondaryMotion) === alreadySm);
 
@@ -318,7 +323,9 @@ check('CU→MS merges (punch-in-able)', planSegments([mkBeat(0, 0, 0.9, { shotSi
 
 const bare3 = 'She cooks through the sequence, laughing between bites.';
 const timed = ensureSegmentTimeline(bare3, fastBeats, [0, 1, 2, 3]);
-check('multi-beat take gets internal TIMELINE injected', /TIMELINE:/.test(timed) && /0\.0-0\.9s/.test(timed), timed);
+// FABLE5 §6: Seedance-friendly PHASE-WORD flow ("First … then … finally …"), not "0.0-0.9s" timestamps
+// (exact trim seconds live in editPlan.slices). The take must still carry N-1 ordered steps.
+check('multi-beat take gets internal TIMELINE injected (phase-words)', /TIMELINE:/.test(timed) && /\bFirst,/.test(timed) && /\bfinally\b/.test(timed) && !/0\.0-0\.9s/.test(timed), timed);
 check('timeline injection idempotent', ensureSegmentTimeline(timed, fastBeats, [0, 1, 2, 3]) === timed);
 check('single-beat take untouched', ensureSegmentTimeline(bare3, fastBeats, [4]) === bare3);
 
@@ -393,6 +400,44 @@ if (existsSync(goldensDir)) {
     check(`goldens/${f} still parses`, r.success, r.success ? '' : JSON.stringify(r.error.issues.slice(0, 3)));
   }
 }
+
+// ── FABLE5 humanization injectors (§1–4, §7) ──
+const idle = ensureIdleBehavior('She wipes the counter and glances at the lens.');
+check('idle behavior appended', /idle motion|weight shift|no frozen pose/i.test(idle));
+check('idle behavior idempotent', ensureIdleBehavior(idle) === idle);
+check('idle block does not self-flag as a freeze-word (negated)', /no frozen pose between actions/i.test(idle));
+
+const ambBar = ensureAmbientSound('She leans on the counter.', { setting: { locationType: 'the Rusty Spur honky-tonk', mood: 'rowdy' } } as unknown as FormatDna, undefined);
+check('bar ambient derived', /murmur|clink|chatter/i.test(ambBar), ambBar);
+const ambRanch = ensureAmbientSound('She sits on the step.', { setting: {} } as unknown as FormatDna, { setDescription: 'open Texas pasture at golden hour' } as ContinuityLock);
+check('ranch ambient derived from continuity lock', /birds|breeze|animals/i.test(ambRanch), ambRanch);
+check('ambient idempotent', ensureAmbientSound(ambBar, { setting: { locationType: 'bar' } } as unknown as FormatDna, undefined) === ambBar);
+
+const staticCam = ensureStaticCameraDefault('She turns to the camera and laughs.');
+check('static-camera default injected when no move present', /no pans, no tilts, no zooms/i.test(staticCam), staticCam);
+check('static-camera default idempotent', ensureStaticCameraDefault(staticCam) === staticCam);
+check('static-camera default NOT injected over a sourced pan', ensureStaticCameraDefault('Quick handheld pan right as she spins.') === 'Quick handheld pan right as she spins.');
+
+check('strip "full" body-word', stripBodyWordFull('Shape the dress to her full hips and naturally full bust. Keep face.') === 'Shape the dress to her natural hips and naturally curvy bust. Keep face.');
+check('"full body" framing preserved', stripBodyWordFull('Full body visible, feet in frame.') === 'Full body visible, feet in frame.');
+
+const accented = ensureAccentDelivery('She says, lips synced: "you actually came".', 'you actually came', 'soft warm Texas drawl, not theatrical');
+check('accent injected on spoken line', /Voice: soft warm Texas drawl/i.test(accented), accented);
+check('accent idempotent (drawl sentinel)', ensureAccentDelivery(accented, 'you actually came', 'soft warm Texas drawl, not theatrical') === accented);
+check('no accent when no dialogue', ensureAccentDelivery('She spins.', undefined, 'soft warm Texas drawl') === 'She spins.');
+
+// ── FABLE5 §9 humanization LINT (Part 1.9) — fires on tells, never on good house style ──
+const badFraming = lintMotionPrompt('Waist-up front angle, subject fills 60%, she turns.', SAV_PROFILE, 'MULTI_CLIP', 0);
+check('lint fires on portrait framing (waist-up/fills 60%)', badFraming.some((x) => /portrait-framing/.test(x.problem)), JSON.stringify(badFraming));
+const badFreeze = lintMotionPrompt('A man stares at her, then she holds still.', SAV_PROFILE, 'MULTI_CLIP', 0);
+check('lint fires on freeze words (stares at / holds still)', badFreeze.some((x) => /freeze-word/.test(x.problem)), JSON.stringify(badFreeze));
+const badExpr = lintMotionPrompt('She reacts with pure disgust then a confident smirk.', SAV_PROFILE, 'MULTI_CLIP', 0);
+check('lint fires on over-directed expression labels', badExpr.some((x) => /over-directed expression/.test(x.problem)), JSON.stringify(badExpr));
+// House style must NOT trip the new lints: "heavy-lidded stare" (noun) is legit; negations pass.
+const houseStyle = lintMotionPrompt(SAV_PROFILE.toolRules.video.confirmedWorkingExamples[0]!, SAV_PROFILE, 'ONE_SHOT', 0);
+check('house-style example still passes the new humanization lint', houseStyle.length === 0, JSON.stringify(houseStyle));
+const negatedTells = lintMotionPrompt('She keeps moving, NOT frozen, no waist-up framing, she never stares at the lens.', SAV_PROFILE, 'MULTI_CLIP', 0);
+check('negated tells pass the humanization lint', !negatedTells.some((x) => /portrait-framing|freeze-word|over-directed/.test(x.problem)), JSON.stringify(negatedTells));
 
 if (failures) { console.error(`\n${failures} FAILURES`); process.exit(1); }
 console.log('\nALL COMPILER TESTS PASS');

@@ -47,7 +47,10 @@ export const RealismTellSchema = z.enum([
 ]);
 
 /** What moves BESIDES the subject's primary action — hair/fabric/soft-tissue/jewelry
- *  inertia. Its absence is the loudest fixable AI-motion tell in generated video. */
+ *  inertia. A generated beat wants 1–2 NATURAL secondary cues (e.g. hair on a head-turn,
+ *  fabric on a weight-shift) — NOT all four. Too many cues make video models animate the
+ *  clothing/accessories over the person (FABLE5 humanization, guide §7). The analyzer may
+ *  observe all four; the generator caps to the 1–2 most natural (rules.ts ensureSecondaryMotion). */
 export const SecondaryMotionSchema = z.object({
   hair: z.string(),          // "hair swings forward as she leans, settles over ~0.5s" | "tied back, static"
   fabric: z.string(),        // "apron ripples with each arm move" | "rigid denim, minimal"
@@ -493,6 +496,10 @@ export const ModelProfileSchema = z.object({
     exampleOverlays: z.array(z.string()),
     bannedWords: z.array(z.string()),
     hashtagPool: z.array(z.string()).optional(),
+    // Spoken-delivery accent injected into every on-camera dialogue line so she doesn't
+    // sound generic (FABLE5 §4.3). e.g. "soft warm Texas drawl, not theatrical". Optional
+    // so pre-accent D1 profiles keep parsing; omitted → no accent clause is added.
+    accent: z.string().optional(),
   }),
   toolRules: z.object({             // per-tool prompt-compiler config
     nb: z.object({

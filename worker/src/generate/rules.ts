@@ -10,20 +10,22 @@ import type {
   TrimSpec, VideoModelChoice,
 } from '../../../shared/contract';
 
-/** Kling-vs-CDance decision (ports scanner:1858-1879). Applied to each ideation's own shape. */
+/** Video-model decision. FABLE5 §6: Seedance 2.0 (cdance_2) is now the PRIMARY production
+ *  target — clips cap at ~15s and skits are stitched multi-clip in the edit, which is how we
+ *  actually produce. kling_3 stays a fully-supported FALLBACK SEAM (all kling code paths —
+ *  cameraLines position, handheld tail, dialogue label — remain live); pass preferKling to
+ *  route a run to it once a model-switch UI param is wired. Default routes everything to Seedance. */
 export function chooseVideoModel(i: {
   hasDialogue: boolean; clipCount: number; durationSec: number; emotionalRangeHigh: boolean;
+  preferKling?: boolean;
 }): { choice: VideoModelChoice; reason: string } {
   if (i.hasDialogue) {
-    return { choice: 'cdance_2', reason: 'Dialogue/lip-sync requires CDance — Kling cannot mouth words.' };
+    return { choice: 'cdance_2', reason: 'Dialogue/lip-sync — Seedance 2.0 mouths words in {braces}; Kling cannot.' };
   }
-  if (i.clipCount > 1) {
-    return { choice: 'cdance_2', reason: 'Multi-clip with transitions requires CDance.' };
+  if (i.preferKling && i.clipCount <= 1 && !i.emotionalRangeHigh) {
+    return { choice: 'kling_3', reason: 'Kling fallback requested for a single no-dialogue scene.' };
   }
-  if (i.emotionalRangeHigh) {
-    return { choice: 'cdance_2', reason: 'Dramatic expression changes need CDance fidelity.' };
-  }
-  return { choice: 'kling_3', reason: 'Single scene, no dialogue — Kling 3.0 is the cost-efficient default.' };
+  return { choice: 'cdance_2', reason: 'Seedance 2.0 is the primary production model (≤15s clips, stitched in the edit).' };
 }
 
 /** Face-forward rule (ports scanner:1886-1890): opening beat must face camera. */
@@ -84,6 +86,21 @@ export function lintMotionPrompt(
   const cinematizer = /(?<!not )(?<!no )(?<!non-)\b(cinematic|bokeh|shallow depth of field|film grain|35mm|anamorphic|color[- ]graded|colour[- ]graded|dramatic lighting|golden cinematic|8k|4k hdr|masterpiece)\b/i;
   const cm = prompt.match(cinematizer);
   if (cm) v.push({ beatIndex, field: 'motionPrompt', problem: `cinematizer word "${cm[0]}" used as a positive descriptor — kills UGC realism (allowed only inside a NOT/no negation)` });
+  // FABLE5 §9 humanization lint (Part 1.9). Conservative, unambiguous, and negation-aware via
+  // isNegatedAt (handles not/no/never/avoid/without…) — verified against the guide's gold-standard
+  // AFTER + SAV confirmedWorkingExamples so they never flag a good prompt. Strong prompt.ts
+  // instruction means these rarely fire; when they do, the existing one-rewrite loop fixes them.
+  const flagTell = (re: RegExp, mk: (w: string) => string): void => {
+    const m = re.exec(prompt);
+    if (m && !isNegatedAt(prompt, m.index)) v.push({ beatIndex, field: 'motionPrompt', problem: mk(m[0]) });
+  };
+  flagTell(/\b(waist[- ]up|front angle|subject fills \d{2}%|fills \d{2}%)\b/i,
+    (w) => `portrait-framing term "${w}" — use environmental anti-portrait framing (subject ~35-45%, room visible, off-center), never "${w}"`);
+  // "stare/staring AT" (the bystander freeze tell) — NOT the noun "a heavy-lidded stare" (legit house style). Verb+object only.
+  flagTell(/\b(stands? (?:completely )?frozen|holds? still|maintains eye contact|stares? at|staring at)\b/i,
+    (w) => `freeze-word "${w}" causes a dead frame — keep her moving ("glances toward… then her attention drifts")`);
+  flagTell(/\b(pure disgust|confident smirk|feigned innocen\w+|intense pleasure|eyes rolling back|exaggerated bliss)\b/i,
+    (w) => `over-directed expression label "${w}" — describe what she is reacting to and let the expression emerge, do not name it`);
   // Self-contained rule applies ONLY to on-camera speech; voiceover scripts live in
   // the dialogue field alone and must NOT appear in the motion prompt.
   if (hasDialogue && !normalize(prompt).includes(normalize(dialogue!))) {
@@ -368,24 +385,31 @@ export function ensureBeatCameraPhysics(motionPrompt: string, sourceBeat: Beat |
   const moveKey = sourceBeat.cameraMove?.toLowerCase().slice(0, 24);
   if (moveKey && !lower.includes(moveKey)) missing.push(sourceBeat.cameraMove);
   const dur = Math.round((sourceBeat.endSec - sourceBeat.startSec) * 10) / 10;
-  if (!/(hold|beat of|clip of|for) ~?\d+(\.\d+)?s/i.test(motionPrompt)) missing.push(`hold ~${dur}s`);
+  // Inject "beat of ~Xs" not "hold ~Xs" — "hold" is a freeze-word that produces dead frames
+  // (FABLE5 §1.2). Legacy "hold ~Xs" still COUNTS as a present duration token (no double-append),
+  // but new injections use the non-freeze vocabulary.
+  if (!/(hold|beat of|clip of|for|runs?) ~?\d+(\.\d+)?s/i.test(motionPrompt)) missing.push(`beat of ~${dur}s`);
   if (!missing.length) return motionPrompt;
   return `${endDot(motionPrompt)} CAMERA(source): ${missing.join(', ')}.`;
 }
 
 const SECONDARY_MOTION_TERMS = /(hair (sway|swing|settle|bounc|whip|flip|mov)|fabric|ripple|jiggle|bounc\w+ (chest|body|curves)|soft[- ]body|inertia|earring|necklace|jewel|apron|skirt (sway|mov)|drape)/i;
 
-/** E.3: every motionPrompt carries secondary motion — REQUIRED non-empty; its absence
- *  is the loudest fixable AI-motion tell. Falls back to a natural default. */
+/** E.3 (revised — FABLE5 §7): a motionPrompt wants 1–2 NATURAL secondary cues, NOT all four.
+ *  Too many (hair + fabric + soft-body + jewelry all at once) make video models animate the
+ *  clothing/accessories OVER the person. So: if the LLM already wrote a cue, leave it; otherwise
+ *  inject at most the TWO most natural cues for the beat (hair on a head-turn, fabric on a
+ *  weight-shift) and let the rest emerge from the scene. */
 export function ensureSecondaryMotion(motionPrompt: string, sm: SecondaryMotion | undefined): string {
   if (SECONDARY_MOTION_TERMS.test(motionPrompt)) return motionPrompt;
-  const parts = sm
+  const parts = (sm
     ? [sm.hair, sm.fabric, sm.softBody, sm.accessories].filter((s) => s && !/^(none|n\/a|not clearly visible)/i.test(s.trim()))
-    : [];
+    : []
+  ).slice(0, 2);   // cap at 1–2 cues — never stack all four
   const text = parts.length
     ? parts.join('; ')
-    : 'hair settles naturally after each move, fabric ripples with the motion, natural soft-body inertia through the action';
-  return `${endDot(motionPrompt)} Secondary motion: ${text}.`;
+    : 'hair settles naturally after the move, fabric shifts with the weight change';
+  return `${endDot(motionPrompt)} Secondary motion (keep it minimal): ${text}.`;
 }
 
 const FACE_FRAMING = /(ECU|\bCU\b|close[- ]up|head[- ]?(and[- ])?shoulders|waist[- ]up|upper[- ]body|face (fills|visible|to camera)|selfie|talking head|facing (the )?camera|into the lens)/i;
@@ -425,6 +449,81 @@ export const MOTION_CADENCE_TAIL = 'Natural 30fps phone motion blur on fast move
 export function ensureMotionCadence(motionPrompt: string): string {
   if (/frame interpolation|no slow-motion|30fps/i.test(motionPrompt)) return motionPrompt;
   return `${endDot(motionPrompt)} ${MOTION_CADENCE_TAIL}`;
+}
+
+// ─────────────────────────────────────────────────────────────
+// FABLE5 humanization injectors (deterministic, post-LLM). Additive + idempotent — they
+// never create lint violations, so they can't trigger the 502-risk rewrite loop. The nuanced
+// work (reaction-not-prescription, freeze→continuation, continuous flow) is TAUGHT in
+// prompt.ts; these guarantee the mechanical, always-safe wins the LLM reliably forgets.
+// ─────────────────────────────────────────────────────────────
+
+/** §7 idle-behavior block — the involuntary life that separates human from AI. Complements
+ *  ensureMicroExpression (blink/gaze/breath) with weight shifts + relaxed hands + the
+ *  no-robotic-symmetry / no-frozen-pose negations (negated, so the freeze guidance never
+ *  self-flags). Skipped on b-roll (no person in frame). */
+export const IDLE_BEHAVIOR_TAIL =
+  'Natural idle motion throughout: subtle weight shifts, small posture adjustments, relaxed fingers, micro facial movement — no robotic symmetry, no frozen pose between actions.';
+const IDLE_TERMS = /(weight shift|posture adjust|relaxed finger|idle motion|frozen pose|robotic symmetry)/i;
+export function ensureIdleBehavior(motionPrompt: string): string {
+  if (IDLE_TERMS.test(motionPrompt)) return motionPrompt;
+  return `${endDot(motionPrompt)} ${IDLE_BEHAVIOR_TAIL}`;
+}
+
+/** §4.4 location-matched ambient. Prompts only ever said "room tone" — derive scene-true
+ *  ambience from the continuity set / DNA location and add it (still phone-mic, no BGM). */
+const AMBIENT_BY_LOCATION: [RegExp, string][] = [
+  [/honky[- ]?tonk|\bbar\b|club|pub|tavern|saloon/i, 'low bar murmur, glasses and bottles clinking, distant overlapping chatter'],
+  [/diner|taqueria|restaurant|cafe|coffee|booth/i, 'utensils touching plates, low booth chatter, faint kitchen sounds'],
+  [/ranch|barn|stable|pasture|corral|farm|porch|dirt road|rodeo|\bhay\b|\bfield\b|outdoor|outside|\byard\b/i, 'birds, a light breeze, distant animals, a faint insect hum'],
+  [/beach|pool|ocean|lake|\bwater\b|terrace|balcony/i, 'water moving, distant voices, a light breeze'],
+  [/kitchen/i, 'a faint fridge hum, utensils set down, distant house sounds'],
+  [/street|city|sidewalk|terminal|airport|elevator|hallway|lobby/i, 'distant traffic and footsteps, muffled passing voices'],
+  [/\bgym\b|studio/i, 'distant weights clinking, low music bleed, footsteps'],
+];
+const AMBIENT_TERMS = /(ambient:|room tone|murmur|chatter|\bbirds\b|breeze|traffic|utensils|clink)/i;
+function deriveAmbient(dna: FormatDna, lock: ContinuityLock | undefined): string {
+  const hay = `${lock?.setDescription ?? ''} ${dna.setting.locationType ?? ''} ${dna.setting.mood ?? ''}`;
+  for (const [re, amb] of AMBIENT_BY_LOCATION) if (re.test(hay)) return amb;
+  return 'quiet natural room tone';
+}
+export function ensureAmbientSound(motionPrompt: string, dna: FormatDna, lock: ContinuityLock | undefined): string {
+  if (AMBIENT_TERMS.test(motionPrompt)) return motionPrompt;
+  return `${endDot(motionPrompt)} Ambient: ${deriveAmbient(dna, lock)} — phone mic, no background music.`;
+}
+
+/** §2A static-camera default (Khian's #1). Amateur phone footage is LOCKED-OFF by default —
+ *  no pans/tilts/zooms/push-ins unless the SOURCE genuinely had a move (which the source-camera
+ *  injectors carry in already). If the prompt has no camera-move verb AND no static/handheld
+ *  declaration, force the amateur static baseline. A cinematic move is made its own static insert
+ *  clip in the edit, never a camera move (§2B — enforced in the ideation structure, not here). */
+const CAMERA_MOVE_TERMS = /\b(pan|tilt|push[- ]?in|dolly|crane|orbit|glide|track(?:s|ing)?|zoom)\b/i;
+const STATIC_DECLARED = /(static|locked[- ]?off|micro[- ]?shake|no pans|handheld (?:phone|micro))/i;
+export const STATIC_CAMERA_DEFAULT =
+  'Static handheld, only natural micro-shake — no pans, no tilts, no zooms, no push-ins';
+export function ensureStaticCameraDefault(motionPrompt: string): string {
+  if (CAMERA_MOVE_TERMS.test(motionPrompt) || STATIC_DECLARED.test(motionPrompt)) return motionPrompt;
+  return `${endDot(motionPrompt)} ${STATIC_CAMERA_DEFAULT}.`;
+}
+
+/** §3 body-word "full" — over-amplifies Seedream ("full bust/hips/thighs" dramatizes the body).
+ *  Strip it from the SD pass wherever it modifies the body; NEVER touch "full body/frame/length"
+ *  (those are framing terms). Belt-and-braces: the seed templates are already scrubbed. */
+export function stripBodyWordFull(sdPrompt: string): string {
+  return sdPrompt
+    .replace(/\bnaturally full\b/gi, 'naturally curvy')
+    .replace(/\bfull(?:er)?\s+(bust|busts|hips?|thighs?|chest|breasts?|figure|curves?|proportions|upper[- ]body|lower[- ]body|midsection)\b/gi, 'natural $1')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/** §4.3 accent injection — every ON-CAMERA spoken line gets the profile's spoken-delivery
+ *  accent so she doesn't sound generic. Idempotent via the accent/drawl/voice sentinel. VO
+ *  formats keep speech OUT of the motion prompt, so this runs only for on-camera speech. */
+export function ensureAccentDelivery(motionPrompt: string, dialogue: string | undefined, accent: string | undefined): string {
+  if (!dialogue?.trim() || !accent?.trim()) return motionPrompt;
+  if (/\bvoice:\s|accent|drawl\b/i.test(motionPrompt)) return motionPrompt;
+  return `${endDot(motionPrompt)} Voice: ${accent}.`;
 }
 
 export const KLING_HANDHELD_TAIL = 'handheld phone footage, micro-shake, autofocus breathing, minor framing imperfections';
@@ -597,25 +696,40 @@ export function planSegments(beats: Beat[], maxSec = MAX_SEGMENT_SRC_SEC): Gener
   return segments;
 }
 
-/** The segment's internal choreography, offsets relative to the take's start. */
+const TIME_RANGE_TOKEN = /\d+(\.\d+)?\s*[-–]\s*\d+(\.\d+)?s/g;
+/** Ordered phase-word connectors — the phase-flow equivalent of a timestamp count.
+ *  Lets ensureSegmentTimeline / lintFidelity verify a merged take carries its internal
+ *  choreography whether it reads as timestamps (legacy) or phase words (Seedance §6). */
+const PHASE_CONNECTOR_TOKEN = /\b(first|then|next|after that|afterward|finally|meanwhile|as (?:she|he|they)|while|before)\b/gi;
+function timelineStepCount(prompt: string): number {
+  return Math.max(prompt.match(TIME_RANGE_TOKEN)?.length ?? 0, prompt.match(PHASE_CONNECTOR_TOKEN)?.length ?? 0);
+}
+
+/** The in-prompt internal timeline for a merged multi-beat take. FABLE5 §6 (Seedance timing):
+ *  Seedance 2.0 parses hard "0.0-0.9s:" timestamps as unstable, so the PROMPT uses continuous
+ *  PHASE-WORD flow ("First … then … finally …"), each beat referencing the previous. The exact
+ *  per-beat trim seconds are NOT lost — they live in editPlan.clips[].slices, computed
+ *  deterministically from the source (applyEditPlanFidelity) and applied when the take is chopped. */
 export function buildSegmentTimeline(beats: Beat[], beatIndices: number[]): string {
-  const t0 = beats[beatIndices[0]!]!.startSec;
-  return beatIndices.map((i) => {
+  const n = beatIndices.length;
+  const lower1 = (s: string) => `${s.charAt(0).toLowerCase()}${s.slice(1)}`;
+  return beatIndices.map((i, k) => {
     const b = beats[i]!;
     const motion = b.motionBeat && !/^(none|n\/a)/i.test(b.motionBeat) ? b.motionBeat : b.action;
-    return `${(b.startSec - t0).toFixed(1)}-${(b.endSec - t0).toFixed(1)}s: ${motion}${b.dialogue ? ` — says: "${b.dialogue}"` : ''}`;
+    const step = k === 0 ? `First, ${lower1(motion)}`
+      : k === n - 1 && n > 1 ? `finally ${lower1(motion)}`
+        : `then ${lower1(motion)}`;
+    return `${step}${b.dialogue ? ` — says: "${b.dialogue}"` : ''}`;
   }).join('; ');
 }
 
-const TIME_RANGE_TOKEN = /\d+(\.\d+)?\s*[-–]\s*\d+(\.\d+)?s/g;
-
-/** Multi-beat takes MUST carry per-beat timing in the motionPrompt — that's the whole
- *  point of merging. If the LLM's prompt lacks enough time-range tokens, append the
- *  source-derived timeline deterministically. */
+/** Multi-beat takes MUST carry their internal choreography in the motionPrompt — that's the
+ *  whole point of merging. If the prompt lacks enough timeline STEPS (timestamps OR phase-word
+ *  connectors), append the source-derived phase-word timeline. Idempotent: counts phase words,
+ *  so a re-run after a lint-repair rewrite sees the appended steps and does not double-append. */
 export function ensureSegmentTimeline(motionPrompt: string, beats: Beat[], beatIndices: number[] | undefined): string {
   if (!beatIndices || beatIndices.length <= 1) return motionPrompt;
-  const ranges = motionPrompt.match(TIME_RANGE_TOKEN)?.length ?? 0;
-  if (ranges >= beatIndices.length - 1) return motionPrompt;
+  if (timelineStepCount(motionPrompt) >= beatIndices.length - 1) return motionPrompt;
   return `${endDot(motionPrompt)} TIMELINE: ${buildSegmentTimeline(beats, beatIndices)}.`;
 }
 
@@ -806,11 +920,8 @@ export function lintFidelity(ideation: Ideation, dna: FormatDna, mode: FidelityM
   ideation.beats.forEach((b, i) => {
     const s = lintSources[i]!;
     const seg = lintSegments[i]!;
-    if (seg.beatIndices.length > 1) {
-      const ranges = b.motionPrompt.match(/\d+(\.\d+)?\s*[-–]\s*\d+(\.\d+)?s/g)?.length ?? 0;
-      if (ranges < seg.beatIndices.length - 1) {
-        v.push({ beatIndex: i, field: 'motionPrompt', problem: `multi-beat take (${seg.beatIndices.length} source beats) missing its internal timeline offsets` });
-      }
+    if (seg.beatIndices.length > 1 && timelineStepCount(b.motionPrompt) < seg.beatIndices.length - 1) {
+      v.push({ beatIndex: i, field: 'motionPrompt', problem: `multi-beat take (${seg.beatIndices.length} source beats) missing its internal timeline steps (timestamps or phase-word flow)` });
     }
     if (s.shotSize) {
       const term = SHOT_SIZE_TEXT[s.shotSize]!;
@@ -818,8 +929,8 @@ export function lintFidelity(ideation: Ideation, dna: FormatDna, mode: FidelityM
         v.push({ beatIndex: i, field: 'motionPrompt', problem: `missing source shot-size token "${term}"` });
       }
     }
-    if (!/(hold|beat of|clip of|for) ~?\d+(\.\d+)?s/i.test(b.motionPrompt)) {
-      v.push({ beatIndex: i, field: 'motionPrompt', problem: 'missing source duration token (e.g. "hold ~1.4s")' });
+    if (!/(hold|beat of|clip of|for|runs?) ~?\d+(\.\d+)?s/i.test(b.motionPrompt)) {
+      v.push({ beatIndex: i, field: 'motionPrompt', problem: 'missing source duration token (e.g. "beat of ~1.4s")' });
     }
     const showsFace = !isBrollBeat(s.shotType) && FACE_FRAMING.test(`${s.framing} ${b.motionPrompt}`);
     if (showsFace && !MICRO_TERMS.test(b.motionPrompt)) {
@@ -918,6 +1029,9 @@ export function enforceIdeation(
     beat.motionPrompt = spoken
       ? ensureDialogueEmbedded(beat.motionPrompt, beat.dialogue, ideation.videoModel.choice)
       : ensureNoOnCameraSpeech(beat.motionPrompt, beat.dialogue);
+    // §4.3: on-camera speech carries the profile's spoken-delivery accent (no accent in the
+    // motion prompt for VO — the accent guides the separately-recorded VO track instead).
+    if (spoken) beat.motionPrompt = ensureAccentDelivery(beat.motionPrompt, beat.dialogue, profile.voice.accent);
 
     // Lint the LLM's OWN motion text first — the fixed realism blocks are post-append
     // and never compete with its char budget (spec E, cap law).
@@ -942,14 +1056,15 @@ export function enforceIdeation(
       beat.sdPrompt = BROLL_SD_NOTE;
     } else {
       beat.sdPrompt = applyBodyWrap(beat.sdPrompt, profile, beat.sdFrameType);
+      beat.sdPrompt = stripBodyWordFull(beat.sdPrompt);   // §3: kill "full" body-word amplification
       beat.sdPrompt = ensureSkinTexture(beat.sdPrompt);
     }
 
-    // Motion chain (order is load-bearing): source camera → whole-video physics →
-    // secondary motion → aesthetic anchor (prepends; its selfie/vlog words count as
-    // face-framing evidence, so micro-expression runs AFTER it and sees the same text
-    // the fidelity linter will see) → micro-expression → cadence tail → per-model
-    // position blocks LAST (kling weights trailing camera language).
+    // Motion chain (order is load-bearing): source camera → whole-video physics → static-
+    // camera default → secondary motion → aesthetic anchor (prepends; its selfie/vlog words
+    // count as face-framing evidence, so micro-expression runs AFTER it and sees the same
+    // text the fidelity linter will see) → micro-expression → idle behavior → ambient →
+    // cadence tail → per-model position blocks LAST (kling weights trailing camera language).
     beat.motionPrompt = reproduce
       ? ensureBeatCameraPhysics(beat.motionPrompt, sourceBeat)
       : beat.motionPrompt;
@@ -957,11 +1072,15 @@ export function enforceIdeation(
     // segment is useless without per-beat offsets (v3.3, Khian's 0.88s-clips fix).
     beat.motionPrompt = ensureSegmentTimeline(beat.motionPrompt, dna.beats, beat.sourceBeatIndices);
     beat.motionPrompt = ensureCameraPhysics(beat.motionPrompt, dna);
+    // §2A: after the source camera is settled, any beat with NO camera move gets the amateur
+    // locked-off baseline — a sourced move (reproduce) already carries its own move verb.
+    beat.motionPrompt = ensureStaticCameraDefault(beat.motionPrompt);
     beat.motionPrompt = ensureSecondaryMotion(beat.motionPrompt, beat.secondaryMotion ?? sourceBeat?.secondaryMotion);
     beat.motionPrompt = ensureAesthetic(beat.motionPrompt, dna);
     beat.motionPrompt = broll
-      ? beat.motionPrompt   // no face in frame — no blink/gaze injection
-      : ensureMicroExpression(beat.motionPrompt, sourceBeat?.framing ?? beat.camera, beat.microExpression);
+      ? beat.motionPrompt   // no face in frame — no blink/gaze/idle injection
+      : ensureIdleBehavior(ensureMicroExpression(beat.motionPrompt, sourceBeat?.framing ?? beat.camera, beat.microExpression));
+    beat.motionPrompt = ensureAmbientSound(beat.motionPrompt, dna, ideation.continuityLock);
     beat.motionPrompt = ensureMotionCadence(beat.motionPrompt);
     beat.motionPrompt = applyModelPositionBlocks(beat.motionPrompt, ideation.videoModel.choice);
     beat.motionPromptCharCount = beat.motionPrompt.length;
