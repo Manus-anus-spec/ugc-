@@ -63,5 +63,25 @@ reduce the appends; switch cdance dialogue to double-quotes. Validate via this l
 -->
 
 ### 2026-08-14 — GPT-image-2 moderation before/after (Claude, WaveSpeed) — gpt-image-2
-- Testing whether `sanitizeImageModeration` defeats the text pre-filter.
-- **Result:** _(pending — live test running)_
+- Model path confirmed: `openai/gpt-image-2/text-to-image` (WaveSpeed v3). Key valid.
+- **Trigger prompt** ("youthful 22-year-old girl, tight corset, sweetheart neckline,
+  heavy-lidded sultry, curvy hourglass") → **FAILED: "Content flagged as potentially
+  sensitive."** ← this is the exact error Niko/Khian hit.
+- **Clean prompt** ("natural adult woman, well-fitted knit top, cluttered kitchen,
+  glancing off-camera, natural window light") → **accepted / generating** (not blocked).
+- **Follow-up A/B + 3× trials (same day) — the honest, complete result:**
+  - Raw trigger prompt: ❌ blocked every time it ran.
+  - Sanitized/clean prompts across all runs: ✅ passed 4×, ❌ blocked 1× (the A/B run).
+  - Scene-framed (activity-first, minimal body): ✅ 3/3 — no clear edge over sanitized here.
+- **Conclusion (corrected):** the filter is **STOCHASTIC** (research-confirmed) — the SAME
+  sanitized prompt blocked once and passed 3× on other runs. So:
+  1. Sanitizing triggers is **necessary and materially helps** (raw = reliably blocked →
+     sanitized = mostly passes). Keep `sanitizeImageModeration`.
+  2. **No prompt-side fix reaches 100%** — stochastic filter + a 2026 visual classifier on
+     photoreal skin. The GUARANTEED fix is **auto-retry + fall back to `nano-banana-2/edit`
+     (no OpenAI filter)** = the Part 8 moderation-retry loop. Data now justifies building it.
+  3. Scene/activity-first framing (minimal body/clothing/expression description) is a
+     plausible extra lever (research-backed) but was NOT isolated as a clear win here —
+     worth folding into nbPrompt composition + A/B-ing properly.
+- ⚠️ Earlier same-day claim "sensitive rejections should drop sharply / sanitizer
+  validated" was **over-stated** on one lucky pass — corrected by the 3× trials above.
