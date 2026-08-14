@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2, RotateCcw, Sparkles, User, XCircle } from 'lucide-react';
 import type { FormatSummary, GenerationRun, Ideation, VariationStrength } from '@shared/contract';
-import { generateIdeations, getGeneration, listFormats, listGenerations, listProfiles } from '../../api';
+import { generateIdeations, synthesizeIdeations, getGeneration, listFormats, listGenerations, listProfiles } from '../../api';
 import { ApiRequestError } from '../../api/client';
 import { ArchetypeChip, CopyButton, KV, ScoreRing, Section, ViralityBadge, scoreTier } from '../ui';
 import { BeatPromptCard } from './BeatPromptCard';
@@ -179,12 +179,12 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
 
   useEffect(() => { if (presetFormatId) setFormatId(presetFormatId); }, [presetFormatId]);
 
-  const start = async () => {
+  const runWith = async (fn: () => Promise<GenerationRun>) => {
     setRunning(true); setError(null); setRun(null); setElapsed(0);
     const t0 = Date.now();
     const timer = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
     try {
-      const result = await generateIdeations(formatId, strength, profileId === 'neutral' ? undefined : profileId);
+      const result = await fn();
       setRun(result);
       setPicked(0);
     } catch (e) {
@@ -194,6 +194,11 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
       setRunning(false);
     }
   };
+
+  // Reproduce/adapt one chosen format.
+  const start = () => runWith(() => generateIdeations(formatId, strength, profileId === 'neutral' ? undefined : profileId));
+  // §10 "surprise me" — no format needed; fuse the library's top blueprints into something new.
+  const surprise = () => runWith(() => synthesizeIdeations(profileId === 'neutral' ? undefined : profileId));
 
   const selectedFormat = formats.find((f) => f.id === formatId);
   const forWhom = profileId === 'neutral' ? 'character-neutral' : `for ${profiles.find((p) => p.id === profileId)?.name ?? profileId}`;
@@ -251,7 +256,21 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
           >
             {running ? 'ideating…' : 'Generate ideation'}
           </button>
+          <button
+            onClick={() => void surprise()}
+            disabled={running}
+            title="Fuse the top viral formats in your library into a brand-new idea — no format needed"
+            className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-md border border-electric/60 text-electric
+                       hover:bg-electric/10 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Sparkles size={14} />
+            {running ? 'fusing…' : 'Surprise me'}
+          </button>
         </div>
+        <p className="text-[11px] text-dim">
+          <span className="text-electric">Surprise me</span> invents a fresh format by fusing your top-scoring library
+          blueprints{profileId !== 'neutral' ? ` for ${profiles.find((p) => p.id === profileId)?.name ?? profileId}` : ''} — no source needed.
+        </p>
         {selectedFormat && (
           <div className="flex items-center gap-2">
             <ArchetypeChip archetype={selectedFormat.archetype} />
