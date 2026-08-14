@@ -484,8 +484,10 @@ export function ensureDialogueEmbedded(motionPrompt: string, dialogue: string | 
   const line = dialogue?.trim();
   if (!line) return motionPrompt;
   if (normalize(motionPrompt).includes(normalize(line))) return motionPrompt;
+  // Seedance 2.0 lip-syncs + voices from DOUBLE QUOTES (delivery tone outside) — NOT curly
+  // braces (FABLE5 §6 research). Kling uses a spoken-label quote.
   const embedded = model === 'cdance_2'
-    ? `She says naturally, lips synced {${line}}.`     // CDance: curly-brace quote, delivery outside
+    ? `She says: "${line}" — casual, natural delivery.`
     : `She says, lips synced: "${line}".`;
   return `${motionPrompt.trim().replace(/[.!?]?$/, '.')} ${embedded}`;
 }
@@ -584,18 +586,26 @@ function stripPhrase(s: string, phrase: string): string {
   return s.replace(re, '').replace(/\s{2,}/g, ' ').trim();
 }
 
-/** E.6: per-model blocks in their load-bearing POSITION — kling_3 weights trailing
- *  camera language (handheld block LAST); cdance_2 needs the negation pair + phone-mic
- *  line, with the subtitle ban as the final tail. */
+/** FABLE5 §6 Seedance-2.0 LEAN tail. 2.0 wants FEW, intentional clauses — it over-rejects
+ *  on long negative stacks and no longer needs the 1.x "no smoothness/no stabilization" trick
+ *  (it separates camera vs subject motion natively). So Seedance gets ONE consolidated closing
+ *  line: derived ambient + phone-mic audio + a single ≤6-item negative list. Replaces the old
+ *  three-sentence cdance tail (negation pair + audio line + subtitle ban). Idempotent. */
+export function applySeedanceLeanTail(motionPrompt: string, dna: FormatDna, lock: ContinuityLock | undefined): string {
+  if (/phone-mic audio|no on-screen text/i.test(motionPrompt)) return motionPrompt;
+  return `${endDot(motionPrompt)} Background: ${deriveAmbient(dna, lock)}, phone-mic audio — no music, no on-screen text or subtitles, no watermark, no slow motion.`;
+}
+
+/** E.6 (Kling only): kling_3 weights trailing camera language, so its handheld/anti-cinematic
+ *  block goes LAST. Seedance uses applySeedanceLeanTail instead (see enforceIdeation gating). */
 export function applyModelPositionBlocks(motionPrompt: string, model: VideoModelChoice): string {
   let p = endDot(motionPrompt);
   if (model === 'kling_3') {
     p = stripPhrase(p, KLING_HANDHELD_TAIL);
     return `${endDot(p)} ${cap1(KLING_HANDHELD_TAIL)}.`;
   }
-  // cdance_2
-  if (!/no smoothness/i.test(p)) p = `${endDot(p)} ${cap1(CDANCE_NEGATION_PAIR)}.`;
-  if (!/phone microphone|room tone/i.test(p)) p = `${endDot(p)} ${cap1(CDANCE_AUDIO_LINE)}.`;
+  // Legacy cdance path (kept for any direct caller): consolidated, no obsolete negation pair.
+  if (!/phone microphone|room tone|phone-mic/i.test(p)) p = `${endDot(p)} ${cap1(CDANCE_AUDIO_LINE)}.`;
   p = stripPhrase(p, CDANCE_SUBTITLE_TAIL);
   return `${endDot(p)} ${cap1(CDANCE_SUBTITLE_TAIL)}.`;
 }
@@ -1127,12 +1137,24 @@ export function enforceIdeation(
     beat.motionPrompt = ensureStaticCameraDefault(beat.motionPrompt);
     beat.motionPrompt = ensureSecondaryMotion(beat.motionPrompt, beat.secondaryMotion ?? sourceBeat?.secondaryMotion);
     beat.motionPrompt = ensureAesthetic(beat.motionPrompt, dna);
+    // FABLE5 §6 LEAN MODE: Seedance 2.0 over-rejects on stacked clauses/negatives, so it gets
+    // micro-expression only (no verbose idle block) and ONE consolidated closing line (ambient +
+    // phone-mic + a single negative list, no obsolete stabilization pair, no separate cadence
+    // sentence). Kling still defaults cinematic and needs the fuller anti-cinematic push, so it
+    // keeps the idle block, ambient, cadence tail, and the trailing handheld block.
+    const isSeedance = ideation.videoModel.choice === 'cdance_2';
     beat.motionPrompt = broll
       ? beat.motionPrompt   // no face in frame — no blink/gaze/idle injection
-      : ensureIdleBehavior(ensureMicroExpression(beat.motionPrompt, sourceBeat?.framing ?? beat.camera, beat.microExpression));
-    beat.motionPrompt = ensureAmbientSound(beat.motionPrompt, dna, ideation.continuityLock);
-    beat.motionPrompt = ensureMotionCadence(beat.motionPrompt);
-    beat.motionPrompt = applyModelPositionBlocks(beat.motionPrompt, ideation.videoModel.choice);
+      : isSeedance
+        ? ensureMicroExpression(beat.motionPrompt, sourceBeat?.framing ?? beat.camera, beat.microExpression)
+        : ensureIdleBehavior(ensureMicroExpression(beat.motionPrompt, sourceBeat?.framing ?? beat.camera, beat.microExpression));
+    if (isSeedance) {
+      beat.motionPrompt = applySeedanceLeanTail(beat.motionPrompt, dna, ideation.continuityLock);
+    } else {
+      beat.motionPrompt = ensureAmbientSound(beat.motionPrompt, dna, ideation.continuityLock);
+      beat.motionPrompt = ensureMotionCadence(beat.motionPrompt);
+      beat.motionPrompt = applyModelPositionBlocks(beat.motionPrompt, ideation.videoModel.choice);
+    }
     beat.motionPromptCharCount = beat.motionPrompt.length;
 
     if (!beat.sdPrompt.trim()) {

@@ -62,6 +62,29 @@ reduce the appends; switch cdance dialogue to double-quotes. Validate via this l
 - **Promote to rule?:** yes(→rules.ts/prompt.ts) / no / keep testing
 -->
 
+### 2026-08-14 — Seedance 2.0 LEAN MODE shipped (prompt-side) — cdance_2
+Model-gated the motion assembly: Seedance now gets a LEAN prompt, Kling keeps the heavier
+anti-cinematic push it still needs. Changes (rules.ts + prompt.ts):
+- Dropped the verbose idle-behavior block for Seedance (2.0 handles natural motion natively).
+- Dropped the obsolete "no smoothness, no stabilization" pair (a 1.x workaround).
+- Collapsed the 3 tail sentences (cadence + phone-mic audio + subtitle ban) into ONE
+  closing negative line: `— no music, no on-screen text or subtitles, no watermark, no slow motion`.
+- Dialogue now DOUBLE-QUOTES + delivery tone (was curly braces).
+- **Result on a representative Belle beat: 142 words → 107 words** (Kling path stays 142).
+- **NEXT: Khian to generate this clip on Seedance and judge** — does leaner = better motion /
+  less jitter / better dialogue? Log the verdict here. If 107 still feels over-stuffed, v2
+  folds secondary-motion into the action line and trims the static-camera clause (target 60–100).
+
+Example AFTER (Seedance lean, ~107 words) to test:
+> Candid iPhone clip at a honky-tonk, auto-exposure, deep focus — not cinematic. She leans on
+> the bar, catches him looking, tilts her head and laughs. She says: "you really rode that
+> thing?" — casual, natural delivery. Voice: soft warm Texas drawl… Static handheld, only
+> natural micro-shake — no pans/tilts/zooms/push-ins. Secondary motion: copper waves swing…;
+> plaid shifts… Background: low bar murmur, glasses clinking, chatter, phone-mic audio — no
+> music, no on-screen text or subtitles, no watermark, no slow motion.
+
+---
+
 ### 2026-08-14 — GPT-image-2 moderation before/after (Claude, WaveSpeed) — gpt-image-2
 - Model path confirmed: `openai/gpt-image-2/text-to-image` (WaveSpeed v3). Key valid.
 - **Trigger prompt** ("youthful 22-year-old girl, tight corset, sweetheart neckline,

@@ -12,7 +12,7 @@ import {
   ensureNbRealism, ensureSecondaryMotion, ensureSegmentTimeline, ensureSkinTexture, planSegments,
   lintFidelity, lintMotionPrompt, lintNbPrompt, lintPlasticTells, motionCharCap,
   needsFaceForwardFix, stripIdentityDescriptors, wrapIdentityLock,
-  CDANCE_SUBTITLE_TAIL, KLING_HANDHELD_TAIL,
+  KLING_HANDHELD_TAIL, applySeedanceLeanTail,
   ensureIdleBehavior, ensureAmbientSound, ensureStaticCameraDefault, stripBodyWordFull, ensureAccentDelivery,
   sanitizeImageModeration,
 } from '../worker/src/generate/rules';
@@ -211,10 +211,17 @@ check('kling handheld block appended LAST', klinged.trimEnd().replace(/\.$/, '')
 const midBlock = `Raw iPhone look, ${KLING_HANDHELD_TAIL}, she stirs and laughs at the counter.`;
 const klingMoved = applyModelPositionBlocks(midBlock, 'kling_3');
 check('kling block MOVED to end when mid-prompt', klingMoved.trimEnd().replace(/\.$/, '').toLowerCase().endsWith(KLING_HANDHELD_TAIL), klingMoved);
-const cdanced = applyModelPositionBlocks('Raw iPhone look, she says {so good} and grins.', 'cdance_2');
-check('cdance negation pair + phone-mic line injected', /no smoothness, no stabilization/i.test(cdanced) && /phone microphone/i.test(cdanced), cdanced);
-check('cdance subtitle ban is the final tail', cdanced.trimEnd().replace(/\.$/, '').toLowerCase().endsWith(CDANCE_SUBTITLE_TAIL), cdanced);
-check('cdance idempotent-ish (no duplicate blocks)', (applyModelPositionBlocks(cdanced, 'cdance_2').match(/no smoothness/gi) ?? []).length === 1);
+// FABLE5 §6 lean mode: the Seedance production path is applySeedanceLeanTail (used in
+// enforceIdeation) — ONE consolidated line, NO obsolete "no smoothness/no stabilization".
+const dnaLean = { setting: { locationType: 'kitchen' } } as unknown as FormatDna;
+const leanTail = applySeedanceLeanTail('Raw iPhone look, she stirs the pot and grins.', dnaLean, undefined);
+check('seedance lean tail: no obsolete stabilization pair', !/no smoothness|no stabilization/i.test(leanTail), leanTail);
+check('seedance lean tail: single negatives line with subtitle+watermark+music bans', /no music/i.test(leanTail) && /subtitles/i.test(leanTail) && /no watermark/i.test(leanTail), leanTail);
+check('seedance lean tail: carries phone-mic audio + derived ambient', /phone-mic audio/i.test(leanTail), leanTail);
+check('seedance lean tail idempotent', applySeedanceLeanTail(leanTail, dnaLean, undefined) === leanTail);
+// Legacy direct cdance path (applyModelPositionBlocks) also drops the obsolete negation pair.
+const cdanced = applyModelPositionBlocks('Raw iPhone look, she grins.', 'cdance_2');
+check('legacy cdance path drops the obsolete negation pair', !/no smoothness, no stabilization/i.test(cdanced), cdanced);
 
 // ── skin texture + plastic tells (Part F) ──
 const sdSkin = ensureSkinTexture('Fill the fitted dress with her curvy figure. Keep face and background exactly.');
@@ -357,7 +364,7 @@ check('mangled CAMERA(source) block gets missing tokens re-injected', reinjected
 // ── dialogue embed enforced, not asked (Jul 26) ──
 const dlgLine = 'come taste this before I change my mind';
 const noDlg = ensureDialogueEmbedded('Selfie angle, she stirs the pot and smirks at the lens.', dlgLine, 'cdance_2');
-check('missing dialogue EMBEDDED (cdance curly style)', noDlg.includes(`{${dlgLine}}`), noDlg);
+check('missing dialogue EMBEDDED (cdance double-quote style, §6)', noDlg.includes(`"${dlgLine}"`) && !noDlg.includes(`{${dlgLine}}`), noDlg);
 check('embedded dialogue passes the self-contained lint',
   !lintMotionPrompt(noDlg, SAV_PROFILE, 'MULTI_CLIP', 0, dlgLine).some((x) => x.problem.includes('dialogue')), noDlg);
 const hasDlg = `She grins — she says, lips synced: "${dlgLine}" — steam rising.`;
