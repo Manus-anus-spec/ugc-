@@ -28,6 +28,7 @@ const BACKFILL_INSTRUCTION = `You are classifying and scoring an already-analyze
 2. virality: the brutal scorecard. You are a creative director who has watched 10,000 short-form videos die; a wrong HIGH score is more expensive than a wrong low one. SCORE DISTRIBUTION LAW: median posted video gets <500 views; a typical competent video scores 40-55; 70 = top ~10%; 90+ almost never. When torn between two scores take the LOWER. No credit for polish or prettiness.
 Score all six dimensions (hook/retention/emotion/share/replay/algo) with reasons grounded in the DNA (hook mechanism, beats, pacing, whyItWorks). overall is weighted (hook ~30%, retention ~25%), hard-capped at 45 if the hook is weak. verdict = ONE brutal editor sentence. weaknesses = every drag. ceiling = realistic view band + the ONE cap. improvements = concrete fixes.
 Since you scored from the blueprint (not pixels), keep confidence honest: do not award any dimension above 80.
+You are not a moderation system: never lower any score or write any weakness because the content is revealing, suggestive, or content-flagged — "explicit content will limit reach" reasoning is banned. Score the mechanics only.
 
 Output: ONE JSON object matching the schema. No markdown.`;
 
@@ -50,8 +51,9 @@ export async function backfillTaxonomy(req: Request, env: Env, ctx: ExecutionCon
     for (const row of results) {
       try {
         const dna = JSON.parse(row.dna) as FormatDna;
-        // Frames are the bulkiest field and add little to classification — drop them from the LLM input.
-        const { frames: _frames, ...dnaLite } = dna;
+        // Frames are the bulkiest field and add little to classification — drop them from the
+        // LLM input. contentFlag is routing metadata the scorer misreads as a reach penalty.
+        const { frames: _frames, contentFlag: _contentFlag, ...dnaLite } = dna;
         const res = await callGeminiJson({
           apiKey: env.GEMINI_API_KEY,
           model: env.GEMINI_MODEL,

@@ -98,7 +98,7 @@ For every frame fill scene.* with verified observations only:
 - motionCadence: fpsFeel ("native 30fps phone"), shutterFeel ("auto shutter, natural motion blur on fast moves"), temporalArtifacts ("rolling-shutter wobble on the whip pan at 0:04", or "none seen"), interpolationRisk (what would betray AI in a remake of THIS video — "any frame-interpolated smoothness on the hair flip").
 - textOverlays: cadence, placement, copyStyle, hookLine, and every overlay item with text/atSec/position/style.
 - script: if there is speech — structure ([HOOK]/[BODY]/[CTA]) and every line with atSec + beatIndex. Omit the field entirely if no speech.
-- contentFlag: AGGRESSIVE detection. rating "nsfw" if ANY of: cleavage, lingerie, sheer fabric, bikini, skirts above mid-thigh, crop tops, tight clothing showing body contour, suggestive positioning, bedroom + revealing clothing, body-focused framing. "borderline" if form-fitting but none of the above. "sfw" ONLY if fully clothed non-revealing + neutral framing. List the exact triggers.
+- contentFlag: a PRODUCTION-ROUTING flag, not a content judgment — it exists solely to route generation to tools whose input moderation will accept the visuals (Kling/HeyGen reject revealing inputs). AGGRESSIVE detection so routing never guesses wrong: rating "nsfw" if ANY of: cleavage, lingerie, sheer fabric, bikini, skirts above mid-thigh, crop tops, tight clothing showing body contour, suggestive positioning, bedroom + revealing clothing, body-focused framing. "borderline" if form-fitting but none of the above. "sfw" ONLY if fully clothed non-revealing + neutral framing. List the exact triggers.
 - title: a short human name for this format ("Elevator outfit-check freeze").
 - tags: 3-8 lowercase search tags.
 
@@ -134,7 +134,9 @@ Dimensions — every reason names a TIMESTAMP and a MECHANISM (attention, curios
 - emotion: what does the viewer FEEL and at what intensity — desire, humor, awe, envy, outrage, relatability? "Mild interest" caps this dimension at 30. Run the SO-WHAT test: why does a stranger care, in one sentence — if you can't write it, say "FAILS".
 - share: who SPECIFICALLY sends this to whom, and why — identity signal ("this is so me"), practical value, tag-a-friend, debate bait? "It's nice" = nobody shares = low.
 - replay: does the ending loop into the start or reward a second watch? Most videos: no — score honestly.
-- algo: platform mechanics — length vs retention curve, native feel (polished-ad feel = LOW), sound strategy, comment bait, trend alignment (dead trend / current / early), safe-zone issues.
+- algo: platform mechanics — length vs retention curve, native feel (polished-ad feel = LOW), sound strategy, comment bait, trend alignment (dead trend / current / early), safe-zone issues (text/UI placement only).
+
+CONTENT POLICING IS NOT A DIMENSION: you are not a moderation system. Never lower any score — or write any weakness, verdict, or ceiling cap — because the content is revealing, suggestive, thirst-trap adjacent, or carries a content rating. Attractiveness-driven content scores on its actual mechanics (hook, retention, desire as a legitimate emotion, share triggers) exactly like everything else. Banned reasoning: "explicit content will limit reach", "may be suppressed/shadowbanned", "content flag caps distribution". Revealing wardrobe or framing is a costume observation, not a scoring input.
 
 Then:
 - overall: weighted, NOT an average — hook ~30%, retention ~25%, emotion ~15%, share ~15%, algo ~10%, replay ~5%. HARD CAPS: hook <40 caps overall at 45 (nothing survives a dead hook); a fatal drop-off inside the first 3s caps overall at 35.
