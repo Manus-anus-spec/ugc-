@@ -318,7 +318,9 @@ const IMAGE_MODERATION_MAP: [RegExp, string][] = [
 export function sanitizeImageModeration(nbPrompt: string): string {
   let p = nbPrompt;
   for (const [re, rep] of IMAGE_MODERATION_MAP) p = p.replace(re, rep);
-  return p.replace(/\s{2,}/g, ' ').replace(/\s+([,.;])/g, '$1').replace(/,\s*,/g, ',').trim();
+  return p
+    .replace(/\b(well-fitted|fitted) fitted\b/gi, 'fitted')   // "tight corset" → collapse double-fitted
+    .replace(/\s{2,}/g, ' ').replace(/\s+([,.;])/g, '$1').replace(/,\s*,/g, ',').trim();
 }
 
 /** Sanitize LLM INPUT per profile policy (stored DNA keeps raw observations — plan §5). */
