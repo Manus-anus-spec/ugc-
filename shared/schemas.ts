@@ -47,11 +47,15 @@ export const RealismTellSchema = z.enum([
 ]);
 
 /** What moves BESIDES the subject's primary action — hair/fabric/soft-tissue/jewelry
- *  inertia. Its absence is the loudest fixable AI-motion tell in generated video. */
+ *  inertia. KEEP IT TO 1–2 NATURAL CUES (e.g. hair moves with a head turn, fabric
+ *  responds to a weight shift) — over-listing secondary motion makes video models
+ *  animate the CLOTHING over the person (the guide's #7 tell); let the rest emerge
+ *  from the scene. "none" is a legitimate value for a still moment — do NOT force all
+ *  four. (Reconciled Aug-14: the old "all four = wrong" rule was inverted.) */
 export const SecondaryMotionSchema = z.object({
-  hair: z.string(),          // "hair swings forward as she leans, settles over ~0.5s" | "tied back, static"
-  fabric: z.string(),        // "apron ripples with each arm move" | "rigid denim, minimal"
-  softBody: z.string(),      // natural soft-tissue inertia on action beats, as observed
+  hair: z.string(),          // "hair swings forward as she leans, settles over ~0.5s" | "tied back, static" | "none"
+  fabric: z.string(),        // "apron ripples with each arm move" | "rigid denim, minimal" | "none"
+  softBody: z.string(),      // natural soft-tissue inertia on action beats, as observed | "none"
   accessories: z.string(),   // "hoop earrings swing on the head turn" | "none"
 });
 
@@ -493,6 +497,10 @@ export const ModelProfileSchema = z.object({
     exampleOverlays: z.array(z.string()),
     bannedWords: z.array(z.string()),
     hashtagPool: z.array(z.string()).optional(),
+    // Spoken-delivery accent, injected into every on-camera dialogue motionPrompt so
+    // she doesn't sound generic (e.g. "soft warm Texas drawl, not theatrical"). Keep it
+    // a delivery descriptor, never theatrical. Optional — omit for a neutral voice.
+    accent: z.string().optional(),
   }),
   toolRules: z.object({             // per-tool prompt-compiler config
     nb: z.object({

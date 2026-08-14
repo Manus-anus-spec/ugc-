@@ -10,20 +10,28 @@ import type {
   TrimSpec, VideoModelChoice,
 } from '../../../shared/contract';
 
-/** Kling-vs-CDance decision (ports scanner:1858-1879). Applied to each ideation's own shape. */
+/** Video-model decision. Seedance 2.0 (cdance_2) is the PRIMARY target (FABLE5 Part 6,
+ *  Aug-14): our production model is Seedance 2.0 and skits are multi-clip stitched in the
+ *  edit. Kling (kling_3) is kept as a cost-efficient FALLBACK seam — a caller passes
+ *  preferModel:'kling_3' (future profile field / generate param) to route simple
+ *  single-scene no-dialogue content to Kling; the default is Seedance. */
 export function chooseVideoModel(i: {
   hasDialogue: boolean; clipCount: number; durationSec: number; emotionalRangeHigh: boolean;
+  preferModel?: VideoModelChoice;
 }): { choice: VideoModelChoice; reason: string } {
   if (i.hasDialogue) {
-    return { choice: 'cdance_2', reason: 'Dialogue/lip-sync requires CDance — Kling cannot mouth words.' };
+    return { choice: 'cdance_2', reason: 'Dialogue/lip-sync requires Seedance 2.0 — Kling cannot mouth words.' };
   }
   if (i.clipCount > 1) {
-    return { choice: 'cdance_2', reason: 'Multi-clip with transitions requires CDance.' };
+    return { choice: 'cdance_2', reason: 'Multi-clip skit stitched in the edit — Seedance 2.0.' };
   }
   if (i.emotionalRangeHigh) {
-    return { choice: 'cdance_2', reason: 'Dramatic expression changes need CDance fidelity.' };
+    return { choice: 'cdance_2', reason: 'Dramatic expression changes need Seedance 2.0 fidelity.' };
   }
-  return { choice: 'kling_3', reason: 'Single scene, no dialogue — Kling 3.0 is the cost-efficient default.' };
+  const fallback = i.preferModel ?? 'cdance_2';
+  return fallback === 'kling_3'
+    ? { choice: 'kling_3', reason: 'Kling 3.0 fallback — single scene, no dialogue (cost-efficient seam).' }
+    : { choice: 'cdance_2', reason: 'Seedance 2.0 is the default primary target.' };
 }
 
 /** Face-forward rule (ports scanner:1886-1890): opening beat must face camera. */
@@ -173,6 +181,99 @@ const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const NEGATION_TAIL = /(\bnot?\b|\bnever\b|\bavoid(s|ing)?\b|\bwithout\b|\bzero\b|\bnon[- ]?|\bisn'?t\b|\bfree of\b)[^.;!?]{0,28}$/i;
 function isNegatedAt(text: string, index: number): boolean {
   return NEGATION_TAIL.test(text.slice(Math.max(0, index - 36), index));
+}
+
+// ── Humanization lint (Aug-14 FABLE5 overhaul — bake the guide's tells into code) ──
+// Enforced CENTRALLY so every profile (incl. live D1 rows) inherits it without a data
+// migration. ALL matching is NEGATION-AWARE: "no freezing", "NOT a portrait", "no pans,
+// no tilts" are the CORRECT house phrasings and must never flag. Matching is PHRASE-level,
+// never bare words — the gold-standard prompt legitimately uses "small pauses while
+// chewing" and "hold the eye contact", so only freeze-INDUCING phrasings are banned.
+
+/** Guide §2 — dead-frame phrases. */
+export const FREEZE_PHRASES = [
+  'stands frozen', 'completely frozen', 'frozen pose', 'freeze frame', 'freezes in place',
+  'holds the expression', 'holds still', 'holds the pose', 'briefly holds', 'holds her pose',
+  'maintains eye contact', 'stares at', 'staring at', 'stares into', 'stares blankly',
+  'stands still', 'stands motionless', 'stares in surprise',
+];
+/** Guide §8 — portrait-inducing framing (use environmental % framing instead). */
+export const PORTRAIT_PHRASES = [
+  'waist-up', 'waist up', 'front angle', 'subject fills 50', 'fills 50-60', 'fills 50–60',
+  'fills 55', 'fills 60', 'centered portrait', 'portrait framing', 'portrait shot',
+];
+/** Guide §9-10 / classifier — cinematic camera MOVES. Default is a static amateur phone;
+ *  a real move is expressed as phone behavior ("quick handheld pivot, slight overshoot,
+ *  settles") or negated ("no pans, no tilts"). These bare directives read as produced. */
+export const CINEMATIC_MOVE_PHRASES = [
+  'push-in', 'push in', 'pushes in', 'dolly', 'crane shot', 'orbit', 'orbits around',
+  'tracking shot', 'whip pan', 'slow pan', 'smooth pan', 'gimbal', 'stabilized glide',
+  'slow zoom', 'zooms in', 'zoom in', 'zoom out', 'slow-motion', 'slow motion',
+];
+/** Guide §1 — the BEFORE example's over-directed expression labels. Curated + specific so
+ *  qualified gold-prompt uses ("exaggerated but playful enjoyment") never trip. */
+export const OVERDIRECTED_LABELS = [
+  'exaggerated bliss', 'intense pleasure', 'eyes rolling back', 'eyes roll back',
+  'confident smirk', 'pure disgust', 'feigned innocent', 'shocked expression',
+];
+
+const HUMANIZATION_GROUPS: { label: string; phrases: string[] }[] = [
+  { label: 'freeze/dead-frame phrase (use "briefly looks toward…" / "her expression shifts as…")', phrases: FREEZE_PHRASES },
+  { label: 'portrait-inducing framing (use "NOT a portrait, environmental, subject ~35–45%, room visible")', phrases: PORTRAIT_PHRASES },
+  { label: 'cinematic camera move (default is a static amateur phone — express a real move as "quick handheld pivot, slight overshoot, settles", or negate it)', phrases: CINEMATIC_MOVE_PHRASES },
+  { label: 'over-directed expression label (describe what she is reacting to and let it develop, never name the emotion)', phrases: OVERDIRECTED_LABELS },
+];
+
+/** Central humanization lint — negation-aware, phrase-level. scope 'motion' runs all four
+ *  groups on a motionPrompt; scope 'still' runs only portrait framing on an nbPrompt (a
+ *  still is one frame — freeze/camera-move/expression-arc checks don't apply). */
+export function lintHumanization(
+  prompt: string, field: string, beatIndex: number, scope: 'motion' | 'still' = 'motion',
+): LintViolation[] {
+  const v: LintViolation[] = [];
+  const lower = prompt.toLowerCase();
+  const groups = scope === 'still'
+    ? HUMANIZATION_GROUPS.filter((g) => g.phrases === PORTRAIT_PHRASES)
+    : HUMANIZATION_GROUPS;
+  for (const g of groups) {
+    for (const phrase of g.phrases) {
+      let idx = lower.indexOf(phrase);
+      while (idx !== -1) {
+        if (!isNegatedAt(prompt, idx)) {
+          v.push({ beatIndex, field, problem: `${g.label}: "${phrase}" — rewrite (allowed only inside a NOT/no negation)` });
+          break;   // one violation per phrase is enough signal for the rewrite pass
+        }
+        idx = lower.indexOf(phrase, idx + phrase.length);
+      }
+    }
+  }
+  return v;
+}
+
+/** Improvement-log item 1 — "full" makes Seedream over-dramatize the body. Deterministic
+ *  rewrite of the body-PART amplifier (never touches "full body" as a FRAMING term) so
+ *  live D1 profiles that still carry "full" in their SD templates get cleaned at runtime. */
+const SD_FULL_BODY_FIXES: [RegExp, string][] = [
+  // "soft full …" / "naturally full …" collapse FIRST so the part-specific rules below
+  // don't double the qualifier (e.g. "soft full thighs" must become "soft thighs", not
+  // "soft soft thighs").
+  [/\bsoft full\b/gi, 'soft'],
+  [/\bnaturally full\b/gi, 'natural'],
+  [/\bfull upper[- ]body\b/gi, 'natural upper body'],
+  [/\bfull lower[- ]body\b/gi, 'natural lower-body'],
+  [/\bfull curves\b/gi, 'soft natural curves'],
+  [/\bfull bust\b/gi, 'natural bust'],
+  [/\bfull hips\b/gi, 'natural hips'],
+  [/\bfull thighs\b/gi, 'soft thighs'],
+  [/\bfull chest\b/gi, 'natural chest'],
+  [/\bfull[- ]figured\b/gi, 'natural'],
+  [/\bfull figure\b/gi, 'natural figure'],
+  [/\bfuller\b/gi, 'natural'],
+];
+export function autofixSdBodyWord(sdPrompt: string): string {
+  let s = sdPrompt;
+  for (const [re, rep] of SD_FULL_BODY_FIXES) s = s.replace(re, rep);
+  return s.replace(/\s{2,}/g, ' ').trim();
 }
 
 /** NB identity-leak lint: profile descriptors + banned phrases must never appear
@@ -375,16 +476,18 @@ export function ensureBeatCameraPhysics(motionPrompt: string, sourceBeat: Beat |
 
 const SECONDARY_MOTION_TERMS = /(hair (sway|swing|settle|bounc|whip|flip|mov)|fabric|ripple|jiggle|bounc\w+ (chest|body|curves)|soft[- ]body|inertia|earring|necklace|jewel|apron|skirt (sway|mov)|drape)/i;
 
-/** E.3: every motionPrompt carries secondary motion — REQUIRED non-empty; its absence
- *  is the loudest fixable AI-motion tell. Falls back to a natural default. */
+/** E.3: every motionPrompt carries secondary motion when the LLM dropped it. CAPPED AT
+ *  ≤2 CUES (guide §7, reconciled Aug-14): over-listing makes video models animate the
+ *  CLOTHING over the person. The old fallback stacked 3-4 cues — now hair + one more. */
 export function ensureSecondaryMotion(motionPrompt: string, sm: SecondaryMotion | undefined): string {
   if (SECONDARY_MOTION_TERMS.test(motionPrompt)) return motionPrompt;
-  const parts = sm
+  const parts = (sm
     ? [sm.hair, sm.fabric, sm.softBody, sm.accessories].filter((s) => s && !/^(none|n\/a|not clearly visible)/i.test(s.trim()))
-    : [];
+    : []
+  ).slice(0, 2);   // ≤2 cues — the rest should emerge from the scene
   const text = parts.length
     ? parts.join('; ')
-    : 'hair settles naturally after each move, fabric ripples with the motion, natural soft-body inertia through the action';
+    : 'hair settles naturally after the move; fabric shifts with the weight change';
   return `${endDot(motionPrompt)} Secondary motion: ${text}.`;
 }
 
@@ -401,7 +504,7 @@ export function ensureMicroExpression(motionPrompt: string, framing: string | un
   const own = micro && !/^(none|n\/a|not clearly visible)/i.test(micro.trim()) ? cap1(endDot(micro)) : '';
   const detail = MICRO_TERMS.test(own)
     ? own
-    : `${own ? `${own} ` : ''}She blinks naturally, a quick gaze dart off-lens and back, a visible breath.`;
+    : `${own ? `${own} ` : ''}She blinks naturally, a quick gaze dart off-lens and back, a slight breath — no frozen pose between actions.`;
   return `${endDot(motionPrompt)} ${detail}`;
 }
 
@@ -463,6 +566,55 @@ export const SD_SKIN_CLAUSE =
 export function ensureSkinTexture(sdPrompt: string): string {
   if (SKIN_TEXTURE_TERMS.test(sdPrompt)) return sdPrompt;
   return `${endDot(sdPrompt)} ${SD_SKIN_CLAUSE}`;
+}
+
+// ── Humanization injectors (Aug-14 — guide §7/§11/§16-17, post-lint so phrasing is free) ──
+
+/** Guide §7 — the natural-idle block. HEAVY (~230 chars): injected only on ONE_SHOT
+ *  choreography sheets (big char budget). MULTI clips stay tight and get the anti-freeze
+ *  anchor via ensureMicroExpression instead. "a slight breath" (not "breathing") dodges
+ *  profiles that ban the literal word "breathing". */
+export const IDLE_BEHAVIOR_BLOCK =
+  'Natural idle motion throughout: occasional blinking, small eye saccades, a slight breath in the shoulders, subtle weight shifts, relaxed fingers, micro facial movement — no exaggerated expressions, no robotic symmetry, no frozen pose between actions.';
+export function ensureIdleBehavior(motionPrompt: string): string {
+  if (/idle (motion|behavior|human)|robotic symmetry|no frozen pose/i.test(motionPrompt)) return motionPrompt;
+  return `${endDot(motionPrompt)} ${IDLE_BEHAVIOR_BLOCK}`;
+}
+
+/** Guide §11 / improvement-log item 17 — location-matched ambience. Prompts used to say
+ *  only "room tone, no BGM"; derive scene-appropriate sound from the continuity lock so a
+ *  bar sounds like a bar. Skipped for trending_audio (the track IS the sound). */
+const AMBIENT_PRESENT = /(murmur|chatter|clink|birdsong|cicada|utensil|traffic|kitchen hum|footsteps|waves? lapping|breeze|distant animals|booth movement)/i;
+const AMBIENT_MAP: [RegExp, string][] = [
+  [/honky[- ]?tonk|\bbar\b|\bclub\b|\bpub\b|tavern|saloon|nightlife|dance floor/i, 'low bar murmur, glasses and bottles clinking, distant overlapping chatter'],
+  [/diner|restaurant|taqueria|\bbooth\b|\bcafe\b|coffee shop/i, 'utensils on plates, booth movement, low overlapping conversation'],
+  [/ranch|pasture|barn|stable|corral|rodeo|\bfield\b|dirt road|porch|\bfarm|\bhay\b|paddock/i, 'birdsong, a light breeze, distant animals, faint cicadas'],
+  [/beach|\bpool\b|ocean|\blake\b|poolside|waterfront/i, 'water lapping, a light breeze, distant voices'],
+  [/kitchen/i, 'a faint kitchen hum, utensils, a distant appliance'],
+  [/street|\bcity\b|sidewalk|terminal|airport|galley|cabin|elevator|balcony|rooftop/i, 'distant traffic and footsteps, faint muffled voices'],
+];
+export function deriveAmbient(lock: ContinuityLock | undefined): string | undefined {
+  const hay = `${lock?.setDescription ?? ''} ${lock?.timeOfDay ?? ''} ${(lock?.keyProps ?? []).join(' ')}`.toLowerCase();
+  if (!hay.trim()) return undefined;
+  for (const [re, ambient] of AMBIENT_MAP) if (re.test(hay)) return ambient;
+  return undefined;
+}
+export function ensureAmbient(motionPrompt: string, lock: ContinuityLock | undefined, audioPlanType: string): string {
+  if (audioPlanType === 'trending_audio') return motionPrompt;
+  if (AMBIENT_PRESENT.test(motionPrompt)) return motionPrompt;
+  const ambient = deriveAmbient(lock);
+  if (!ambient) return motionPrompt;
+  return `${endDot(motionPrompt)} Ambient sound: ${ambient}, no background music.`;
+}
+
+/** Improvement-log item 16 — inject the profile's spoken accent so on-camera dialogue
+ *  doesn't sound generic. Runs only for on-camera speech with an accent defined. */
+export function ensureAccent(motionPrompt: string, accent: string | undefined, spoken: boolean): string {
+  const a = accent?.trim();
+  if (!spoken || !a) return motionPrompt;
+  const firstToken = a.split(/[,—-]/)[0]!.trim().toLowerCase();
+  if (firstToken && motionPrompt.toLowerCase().includes(firstToken)) return motionPrompt;
+  return `${endDot(motionPrompt)} Her spoken delivery carries a ${a}.`;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -922,6 +1074,7 @@ export function enforceIdeation(
     // Lint the LLM's OWN motion text first — the fixed realism blocks are post-append
     // and never compete with its char budget (spec E, cap law).
     violations.push(...lintMotionPrompt(beat.motionPrompt, profile, ideation.videoFormat, beat.clipIndex, beat.dialogue, fidelityMode, spoken));
+    violations.push(...lintHumanization(beat.motionPrompt, 'motionPrompt', beat.clipIndex, 'motion'));
 
     // NB chain: slop fix + descriptor strip BEFORE lint (deterministic fixes are not
     // violations), then realism bake → continuity lock → identity lock outermost.
@@ -929,6 +1082,7 @@ export function enforceIdeation(
     beat.nbPrompt = autofixNbSlop(beat.nbPrompt);
     beat.nbPrompt = stripIdentityDescriptors(beat.nbPrompt, profile);
     violations.push(...lintNbPrompt(beat.nbPrompt, profile, beat.clipIndex));
+    violations.push(...lintHumanization(beat.nbPrompt, 'nbPrompt', beat.clipIndex, 'still'));
     violations.push(...lintPlasticTells(beat.nbPrompt, 'nbPrompt', beat.clipIndex));
     violations.push(...lintPlasticTells(beat.sdPrompt, 'sdPrompt', beat.clipIndex));
     beat.nbPrompt = ensureNbRealism(beat.nbPrompt, dna);
@@ -942,6 +1096,7 @@ export function enforceIdeation(
       beat.sdPrompt = BROLL_SD_NOTE;
     } else {
       beat.sdPrompt = applyBodyWrap(beat.sdPrompt, profile, beat.sdFrameType);
+      beat.sdPrompt = autofixSdBodyWord(beat.sdPrompt);   // strip "full" body amplifier (item 1)
       beat.sdPrompt = ensureSkinTexture(beat.sdPrompt);
     }
 
@@ -962,6 +1117,14 @@ export function enforceIdeation(
     beat.motionPrompt = broll
       ? beat.motionPrompt   // no face in frame — no blink/gaze injection
       : ensureMicroExpression(beat.motionPrompt, sourceBeat?.framing ?? beat.camera, beat.microExpression);
+    // Humanization injectors (Aug-14, post-lint): location-matched ambient, spoken
+    // accent, and the full idle block on ONE_SHOT choreography sheets (MULTI stays tight
+    // — it gets the anti-freeze anchor from ensureMicroExpression above).
+    beat.motionPrompt = ensureAmbient(beat.motionPrompt, ideation.continuityLock, ideation.audioPlan.type);
+    beat.motionPrompt = ensureAccent(beat.motionPrompt, profile.voice.accent, spoken && !broll);
+    if (ideation.videoFormat === 'ONE_SHOT' && !broll) {
+      beat.motionPrompt = ensureIdleBehavior(beat.motionPrompt);
+    }
     beat.motionPrompt = ensureMotionCadence(beat.motionPrompt);
     beat.motionPrompt = applyModelPositionBlocks(beat.motionPrompt, ideation.videoModel.choice);
     beat.motionPromptCharCount = beat.motionPrompt.length;

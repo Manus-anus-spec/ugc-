@@ -94,6 +94,7 @@ export const SAV_PROFILE: ModelProfile = {
       'getting ready for plans i will cancel in 20 minutes',
     ],
     bannedWords: ['babe', 'hun', 'bb'],
+    accent: 'light, natural American accent — clear and unremarkable, not theatrical',
   },
   toolRules: {
     nb: {
@@ -110,9 +111,13 @@ export const SAV_PROFILE: ModelProfile = {
     sd: {
       mandatory: true,
       frameTypeTemplates: {
-        FULL_FRONT: 'Fill the [clothing] with her natural curves — defined narrow waist with visible indent, toned midsection, naturally full upper body proportions, soft full thighs. Keep face and [background].',
-        FULL_SIDE: 'S-curve silhouette with natural proportions — defined waist, natural full curves in profile. Keep face and background.',
-        BACK: 'Natural full lower-body proportions with defined waist from behind. Keep hair and background.',
+        // "full" removed (Aug-14, improvement-log item 1): the word makes Seedream
+        // over-dramatize the body — "natural / soft + realistic NOT exaggerated" reads
+        // correct every time. autofixSdBodyWord() re-cleans this at runtime for any live
+        // profile still carrying "full".
+        FULL_FRONT: 'Fill the [clothing] with her natural curves — defined narrow waist with visible indent, toned midsection, natural upper body proportions, soft thighs, realistic proportions NOT exaggerated. Keep face and [background].',
+        FULL_SIDE: 'S-curve silhouette with natural proportions — defined waist, soft natural curves in profile, realistic NOT exaggerated. Keep face and background.',
+        BACK: 'Natural lower-body proportions with defined waist from behind, realistic NOT exaggerated. Keep hair and background.',
         UPPER_BODY: 'Proportional natural enhancement of the upper body only — keep face, hair, and background exactly.',
         HEAD_SHOULDERS: 'Enhance skin to natural warm tone. Keep face, hair, and background.',
         UNIFORM: 'Waist definition only, expressed through the uniform fabric fit. Keep face and background.',
@@ -224,6 +229,7 @@ export const BELLE_PROFILE: ModelProfile = {
       'got my horse my dog n mamas cookin what do i need a man for',
     ],
     bannedWords: ['babe', 'hun', 'bb'],
+    accent: 'soft warm Texas drawl, not theatrical',
   },
   contentPolicy: {
     nsfwAllowed: false,   // SFW IG account for now (pivot: NSFW/Telegram later)

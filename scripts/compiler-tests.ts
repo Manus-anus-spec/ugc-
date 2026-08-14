@@ -13,9 +13,10 @@ import {
   lintFidelity, lintMotionPrompt, lintNbPrompt, lintPlasticTells, motionCharCap,
   needsFaceForwardFix, stripIdentityDescriptors, wrapIdentityLock,
   CDANCE_SUBTITLE_TAIL, KLING_HANDHELD_TAIL,
+  lintHumanization, autofixSdBodyWord, ensureIdleBehavior, ensureAmbient, ensureAccent, deriveAmbient,
 } from '../worker/src/generate/rules';
 import type { Beat, ContinuityLock, FormatDna, Ideation, ModelProfile } from '../shared/contract';
-import { SAV_PROFILE, SEED_PROFILES } from '../worker/seeds/profiles';
+import { SAV_PROFILE, BELLE_PROFILE, SEED_PROFILES } from '../worker/seeds/profiles';
 import { FormatDnaSchema, ModelProfileSchema } from '../shared/schemas';
 
 let failures = 0;
@@ -34,7 +35,49 @@ for (const p of SEED_PROFILES) {
 check('dialogue → cdance', chooseVideoModel({ hasDialogue: true, clipCount: 1, durationSec: 8, emotionalRangeHigh: false }).choice === 'cdance_2');
 check('multi-clip → cdance', chooseVideoModel({ hasDialogue: false, clipCount: 3, durationSec: 15, emotionalRangeHigh: false }).choice === 'cdance_2');
 check('emotional → cdance', chooseVideoModel({ hasDialogue: false, clipCount: 1, durationSec: 8, emotionalRangeHigh: true }).choice === 'cdance_2');
-check('simple one-shot → kling', chooseVideoModel({ hasDialogue: false, clipCount: 1, durationSec: 8, emotionalRangeHigh: false }).choice === 'kling_3');
+// FABLE5 Part 6: Seedance 2.0 is the DEFAULT primary target; Kling only via the preferModel seam.
+check('simple one-shot → cdance by default (Seedance 2.0 primary)', chooseVideoModel({ hasDialogue: false, clipCount: 1, durationSec: 8, emotionalRangeHigh: false }).choice === 'cdance_2');
+check('preferModel:kling seam still reaches Kling', chooseVideoModel({ hasDialogue: false, clipCount: 1, durationSec: 8, emotionalRangeHigh: false, preferModel: 'kling_3' }).choice === 'kling_3');
+check('preferModel:kling cannot override dialogue → still cdance', chooseVideoModel({ hasDialogue: true, clipCount: 1, durationSec: 8, emotionalRangeHigh: false, preferModel: 'kling_3' }).choice === 'cdance_2');
+
+// ── FABLE5 humanization overhaul (Aug-14) ──
+// freeze-phrase lint fires on the bad phrasing, passes the gold-standard phrasings
+check('freeze phrase fires', lintHumanization('She stands frozen and stares at the camera.', 'motionPrompt', 0).length >= 2);
+check('gold "small pauses while chewing" does NOT fire', lintHumanization('She keeps eating with small pauses while chewing, blinking naturally.', 'motionPrompt', 0).length === 0);
+check('gold "hold the eye contact" does NOT fire', lintHumanization('She catches the camera and holds the eye contact for a moment with a small amused look.', 'motionPrompt', 0).length === 0);
+check('negated "no frozen pose" does NOT fire', lintHumanization('Continuous motion, no frozen pose between actions, no pans, no tilts.', 'motionPrompt', 0).length === 0);
+check('portrait framing fires', lintHumanization('Waist-up front angle, subject fills 50-60% of the frame.', 'motionPrompt', 0).length >= 2);
+check('anti-portrait numbers do NOT fire', lintHumanization('NOT a portrait, environmental medium-wide, subject occupies ~40% of frame, room visible.', 'motionPrompt', 0).length === 0);
+check('cinematic move fires', lintHumanization('Smooth push-in and a slow pan as she turns, gimbal glide.', 'motionPrompt', 0).length >= 2);
+check('negated "no push-in, no zoom" does NOT fire', lintHumanization('Static handheld, micro-shake only — no push-in, no zoom, no dolly.', 'motionPrompt', 0).length === 0);
+check('over-directed label fires', lintHumanization('Her face shows intense pleasure, eyes rolling back, a confident smirk.', 'motionPrompt', 0).length >= 2);
+check('gold "exaggerated but playful" does NOT fire', lintHumanization('She closes her eyes in exaggerated but playful enjoyment, then looks back.', 'motionPrompt', 0).length === 0);
+check('still scope: portrait fires on nb', lintHumanization('waist-up portrait shot, front angle', 'nbPrompt', 0, 'still').length >= 1);
+check('still scope ignores camera moves', lintHumanization('slow pan and push-in', 'nbPrompt', 0, 'still').length === 0);
+
+// "full" body-word autofix (improvement-log item 1)
+check('autofix strips "full" body amplifiers', !/\bfull\b/i.test(autofixSdBodyWord('naturally full upper body, soft full thighs, full hips, fuller curves')));
+check('autofix keeps "full body" framing untouched', autofixSdBodyWord('full body visible, feet in frame').includes('full body'));
+check('autofix does not double the qualifier ("soft full thighs" → "soft thighs")', autofixSdBodyWord('soft full thighs') === 'soft thighs');
+check('SAV FULL_FRONT template is already "full"-free', !/\bfull\b/i.test(SAV_PROFILE.toolRules.sd.frameTypeTemplates.FULL_FRONT ?? ''));
+
+// secondary motion capped at ≤2 cues (guide §7)
+{
+  const sm = { hair: 'hair sways', fabric: 'dress ripples', softBody: 'soft-body inertia', accessories: 'earrings swing' };
+  const out = ensureSecondaryMotion('She turns and laughs at the counter.', sm as unknown as import('../shared/contract').SecondaryMotion);
+  const cueCount = (out.split('Secondary motion:')[1] ?? '').split(';').length;
+  check('secondary motion capped at ≤2 cues', cueCount <= 2);
+}
+
+// idle block injected (ONE_SHOT), ambient derived, accent injected
+check('idle block injected', ensureIdleBehavior('She stirs the pot and glances over.').includes('no frozen pose between actions'));
+check('idle block idempotent', ensureIdleBehavior(ensureIdleBehavior('x')) === ensureIdleBehavior('x'));
+check('ambient derived for ranch', (deriveAmbient({ setDescription: 'open Texas pasture at golden hour', keyProps: [] } as unknown as ContinuityLock) ?? '').includes('birdsong'));
+check('ambient injected into motion', ensureAmbient('She laughs by the fence.', { setDescription: 'ranch corral / cattle fence' } as unknown as ContinuityLock, 'original_dialogue').includes('Ambient sound'));
+check('ambient skipped for trending_audio', ensureAmbient('She dances.', { setDescription: 'honky-tonk bar' } as unknown as ContinuityLock, 'trending_audio') === 'She dances.');
+check('belle accent injected when spoken', ensureAccent('She smiles and says the line.', BELLE_PROFILE.voice.accent, true).toLowerCase().includes('texas drawl'));
+check('accent skipped when not spoken', ensureAccent('She stirs the pot.', BELLE_PROFILE.voice.accent, false) === 'She stirs the pot.');
+check('belle profile carries an accent', !!BELLE_PROFILE.voice.accent);
 
 // ── face-forward detection ──
 const dnaFacingAway = {
