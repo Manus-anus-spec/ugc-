@@ -34,6 +34,7 @@ function IdeationCard({ ideation, active, onPick }: { ideation: Ideation; active
       </div>
       <h3 className="text-sm font-semibold leading-tight">{ideation.title}</h3>
       <p className="text-xs text-dim leading-snug">{ideation.angle}</p>
+      {ideation.themeFit && <p className="text-[10px] italic text-electric/80 leading-snug">🎯 {ideation.themeFit}</p>}
       {ideation.virality && <p className="text-[11px] italic text-cream/70 leading-snug">“{ideation.virality.verdict}”</p>}
       <div className="flex flex-wrap gap-1">
         {ideation.keptFromOriginal.slice(0, 3).map((k) => (
@@ -73,6 +74,7 @@ function IdeationDetail({ ideation }: { ideation: Ideation }) {
       <ForecastPanel ideation={ideation} />
       <section className="bg-surface border border-orange/30 rounded-lg p-4 space-y-2">
         <p className="text-sm">{ideation.creativeBrief}</p>
+        {ideation.themeFit && <KV k="theme fit" v={<span className="text-electric/90">{ideation.themeFit}</span>} />}
         <KV k="why for profile" v={ideation.whyItWorksForProfile} />
         <KV k="video model" v={`${ideation.videoModel.choice} — ${ideation.videoModel.reason}`} />
         {ideation.faceForwardNote && <KV k="face-forward" v={ideation.faceForwardNote} />}
@@ -82,8 +84,8 @@ function IdeationDetail({ ideation }: { ideation: Ideation }) {
       <div className="space-y-3">
         <p className="font-mono text-[10px] uppercase tracking-wider text-dim">
           {ideation.videoFormat === 'ONE_SHOT'
-            ? '1 continuous take — one NB frame → one SD pass → one motion prompt'
-            : `${ideation.beats.length} clips — each card = one full generation (NB → SD → motion), assembled per the edit plan`}
+            ? '1 continuous take — one GPT-Image frame (Seedream only if the body needs it) → one motion prompt; source cuts recreated as edit slices'
+            : `${ideation.beats.length} clips — each card = one full generation (GPT-Image → conditional Seedream → motion), assembled per the edit plan`}
         </p>
         {ideation.beats.map((b, idx) => (
           <BeatPromptCard key={idx} beat={b} beatNumber={idx} videoFormat={ideation.videoFormat} />
@@ -317,6 +319,11 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
           <p className="text-xs font-mono text-dim">
             formula: <span className="text-cream/85">{run.formulaExtracted}</span>
           </p>
+          {run.sourceFormatIds && run.sourceFormatIds.length > 0 && (
+            <p className="text-[11px] font-mono text-electric/80">
+              ✨ fused from {run.sourceFormatIds.length} library formats: {run.sourceFormatIds.map((id) => id.slice(0, 8)).join(' · ')}
+            </p>
+          )}
           <div className="flex gap-3 flex-wrap md:flex-nowrap">
             {run.ideations.map((i) => (
               <IdeationCard key={i.index} ideation={i} active={picked === i.index} onPick={() => setPicked(i.index)} />
