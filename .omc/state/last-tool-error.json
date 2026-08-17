@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"ls \\\"/Users/mac/Desktop/Desktop/Aruna \\\"/Lead\\\\ Outreach\\\\ Tracker/blooio-brain/\",\"description\":\"List blooio brain worker files\"}",
-  "error": "Exit code 1\nls: /Users/mac/Desktop/Desktop/Aruna /Lead Outreach Tracker/blooio-brain/: No such file or directory",
-  "timestamp": "2026-06-04T12:54:51.885Z",
-  "retry_count": 1
-}

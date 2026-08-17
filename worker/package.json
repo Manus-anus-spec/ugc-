@@ -1,0 +1,20 @@
+{
+  "name": "ugc-api",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "lint": "tsc --noEmit",
+    "migrate:local": "wrangler d1 migrations apply ugc_library --local",
+    "migrate:remote": "wrangler d1 migrations apply ugc_library --remote"
+  },
+  "dependencies": {
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.2",
+    "wrangler": "^4.0.0"
+  }
+}

@@ -6,3 +6,14 @@ coverage/
 *.log
 .env*
 !.env.example
+# worker / migration artifacts
+.wrangler/
+worker/node_modules/
+*-snapshot.json
+migration-import.sql
+.omc/
+SECRETS.local.md
+# session working assets — real-creator frames + batch outputs stay local (public repo)
+LIB_*.png
+qa_*.webp
+batch-results.json
