@@ -17,7 +17,8 @@ import {
   sanitizeImageModeration,
 } from '../worker/src/generate/rules';
 import { BELLE_PROFILE } from '../worker/seeds/profiles';
-import { buildSynthesisDigest } from '../worker/src/generate/prompt';
+import { buildGeneratorInstruction, buildSynthesisDigest } from '../worker/src/generate/prompt';
+import { sampleSurpriseSources } from '../worker/src/generate/surprise';
 import type { Beat, ContinuityLock, FormatDna, Ideation, ModelProfile } from '../shared/contract';
 import { SAV_PROFILE, SEED_PROFILES } from '../worker/seeds/profiles';
 import { FormatDnaSchema, ModelProfileSchema } from '../shared/schemas';
@@ -469,6 +470,104 @@ const digest = buildSynthesisDigest([srcA, srcB]);
 check('digest names both sources', /Taco freeze/.test(digest) && /Ranch reveal/.test(digest), digest);
 check('digest carries mechanisms + virality strengths', /freeze at 0:02/.test(digest) && /scroll-stop freeze/.test(digest), digest);
 check('digest tags archetype + score', /\[skit\]/.test(digest) && /virality 72/.test(digest), digest);
+
+// ── Content Persona Framework schema (2026-08-17): optional block, backward compatible ──
+// (The SEED_PROFILES loop above already proves persona-less profiles still validate.)
+const personaProfile = {
+  ...BELLE_PROFILE,
+  world: {
+    ...BELLE_PROFILE.world,
+    contentPersona: {
+      personaTraits: ['warm', 'hardworking', 'unexpectedly deadpan'],
+      resources: 'self-filmed + a friend on weekends, ranch + small town, high camera confidence, 3-4 posts/wk',
+      theme: 'wholesome ranch-life charm with a dry comedic edge',
+      vehicles: ['ranch chores', 'small-town errands', 'getting-ready moments'],
+      formatMenu: ['skit', 'vlog_moment', 'pov'],
+      brandStatement: 'She is a warm, hardworking, unexpectedly deadpan redhead whose content is wholesome ranch-life charm through chores-and-errands vehicles that feels like small-town comfort for men who miss simple life.',
+      idealFan: 'US men 30-55 who romanticize rural life and loyal-girl warmth',
+      ideationPrompt: 'What would a warm, deadpan ranch girl film today that makes a tired man smile and feel at home?',
+    },
+  },
+};
+check('profile WITH contentPersona validates', ModelProfileSchema.safeParse(personaProfile).success,
+  JSON.stringify(ModelProfileSchema.safeParse(personaProfile).success ? '' : ModelProfileSchema.safeParse(personaProfile).error?.issues.slice(0, 3)));
+check('contentPersona requires exactly 3 traits', !ModelProfileSchema.safeParse({
+  ...personaProfile,
+  world: { ...personaProfile.world, contentPersona: { ...personaProfile.world.contentPersona, personaTraits: ['only', 'two'] } },
+}).success);
+
+// ── §10 "surprise me" sampling (2026-08-17 sameness-bug fix: fresh weighted-random,
+// archetype-diverse draw every press — never the same deterministic trio) ──
+// Seeded LCG so this test is reproducible; production uses Math.random.
+function lcg(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 2 ** 32; };
+}
+// A library shaped like ours: 24 candidates across 6 archetypes, scores 60–85.
+const TYPES = ['skit', 'thirst_trap', 'pov', 'outfit_showcase', 'vlog', 'trend_audio'];
+const LIB = Array.from({ length: 24 }, (_, i) => ({
+  id: `f${i}`, formatType: TYPES[i % TYPES.length]!, score: 85 - i,
+}));
+const libTypeOf = (id: string) => LIB.find((c) => c.id === id)!.formatType;
+const draws = Array.from({ length: 6 }, (_, i) => sampleSurpriseSources(LIB, 3, new Set(), lcg(1000 + i * 7)));
+const drawKeys = draws.map((d) => [...d].sort().join(','));
+check('surprise draws are NOT all identical across 6 presses', new Set(drawKeys).size > 1, drawKeys.join(' | '));
+check('surprise anchors rotate (dnas[0] varies)', new Set(draws.map((d) => d[0])).size > 1, draws.map((d) => d[0]).join(','));
+check('every draw returns 3 sources', draws.every((d) => d.length === 3));
+check('archetype spread held (3 distinct format_types per draw)',
+  draws.every((d) => new Set(d.map(libTypeOf)).size === 3),
+  draws.map((d) => d.map(libTypeOf).join('+')).join(' | '));
+const oldTrio = new Set(['f0', 'f1', 'f2']);   // simulate don't-repeat: last run's sources
+const nextDraw = sampleSurpriseSources(LIB, 3, oldTrio, lcg(42));
+check('don\'t-repeat memory excludes the previous source set', nextDraw.every((id) => !oldTrio.has(id)), nextDraw.join(','));
+const tiny = LIB.slice(0, 3);   // exclusion would starve the fusion → it must be ignored
+check('exclusion is dropped when too few fresh candidates remain',
+  sampleSurpriseSources(tiny, 3, new Set(['f0', 'f1']), lcg(7)).length === 3);
+check('4-source draw works (widened SYNTHESIS_SOURCE_COUNT)', sampleSurpriseSources(LIB, 4, new Set(), lcg(99)).length === 4);
+// Weighting sanity: over many draws, a top-score format should appear far more often than a bottom one.
+let topHits = 0, botHits = 0;
+for (let i = 0; i < 200; i++) {
+  const d = sampleSurpriseSources(LIB, 3, new Set(), lcg(5000 + i));
+  if (d.includes('f0')) topHits++;         // score 85
+  if (d.includes('f23')) botHits++;        // score 62
+}
+check('score weighting biases toward quality without locking it in', topHits > botHits && topHits < 200, `top=${topHits} bot=${botHits}`);
+
+// ── Theme Governor (Content Persona Framework, 2026-08-17) ──
+const beltPersona = personaProfile as ModelProfile;
+const instrPlain = buildGeneratorInstruction(BELLE_PROFILE, 'close', 1, 'synthesize', 5);
+const instrGov = buildGeneratorInstruction(beltPersona, 'close', 1, 'synthesize', 5);
+// Golden diff: without a persona the instruction is UNCHANGED (governor slot renders '').
+check('no THEME GOVERNOR without contentPersona (golden)', !instrPlain.includes('THEME GOVERNOR') && !instrPlain.includes('themeFit'));
+check('persona-less instruction keeps clean directive→profile-law join (golden)', /SYNTHESIZE[\s\S]*\n\n# THE PROFILE IS LAW/.test(instrPlain));
+check('governor injected with persona, states brand statement as hard constraint',
+  instrGov.includes('THEME GOVERNOR') && instrGov.includes(beltPersona.world.contentPersona!.brandStatement) && /HARD constraint/.test(instrGov));
+check('governor demands themeFit + reshape-or-discard filter', /themeFit/.test(instrGov) && /RESHAPE[\s\S]*or DISCARD/.test(instrGov));
+check('governor spine rule present in synthesize', instrGov.includes('SPINE RULE') && /THEME FIT, not raw hook strength/.test(instrGov));
+check('governor spine rule absent in adapt/reproduce (governor still present)',
+  ['adapt', 'reproduce'].every((m) => {
+    const s = buildGeneratorInstruction(beltPersona, 'close', 1, m as 'adapt' | 'reproduce', 5);
+    return s.includes('THEME GOVERNOR') && !s.includes('SPINE RULE');
+  }));
+check('governor scope line protects the locks', /does NOT change identity, face, body, wardrobe, or continuity/.test(instrGov));
+check('lock sections survive governor injection (golden)',
+  instrGov.includes('# THE PROFILE IS LAW') && /NEVER describe the person's physical appearance/.test(instrGov) && /identityLock text handles the face/.test(instrGov));
+
+// ── persona-biased draw: lane bias + anchor guarantee ──
+const MENU = new Set(['skit', 'vlog_moment', 'pov']);   // wholesome lane; thirst_trap/trend_audio/outfit off-menu
+let offAnchor = 0, offSrc = 0, totSrc = 0;
+const laneDraws: string[] = [];
+for (let i = 0; i < 200; i++) {
+  const d = sampleSurpriseSources(LIB, 3, new Set(), lcg(9000 + i), MENU);
+  if (!MENU.has(libTypeOf(d[0]!))) offAnchor++;
+  offSrc += d.filter((id) => !MENU.has(libTypeOf(id))).length; totSrc += d.length;
+  if (i < 6) laneDraws.push([...d].sort().join(','));
+}
+check('persona: anchor (dnas[0]) NEVER off-menu', offAnchor === 0, `${offAnchor}/200`);
+check('persona: off-menu sources are rare, not banned', offSrc > 0 && offSrc / totSrc < 0.3, `${offSrc}/${totSrc}`);
+check('persona: draws stay fresh (not one lane-locked trio)', new Set(laneDraws).size > 1, laneDraws.join(' | '));
+check('persona: no menu → behavior unchanged (same seed, same draw)',
+  sampleSurpriseSources(LIB, 3, new Set(), lcg(1000)).join() === sampleSurpriseSources(LIB, 3, new Set(), lcg(1000), undefined).join());
 
 if (failures) { console.error(`\n${failures} FAILURES`); process.exit(1); }
 console.log('\nALL COMPILER TESTS PASS');

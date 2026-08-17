@@ -492,6 +492,28 @@ export const ModelProfileSchema = z.object({
     persona: z.string(),            // "young woman who works as a flight attendant"
     backstory: z.string().optional(),       // her story/lore — grounds ideation in who she is
     audienceICP: z.string(),        // "men 35-50+, American, financially stable"
+    /**
+     * GriffinOFM Content Persona Framework (2026-08-17): kills "niche". A niche =
+     * THEME (emotional lane, congruent across every post → FANS) + VEHICLE (what she
+     * films, swappable → VIEWS). Cascade: Roots (persona traits + look + resources) →
+     * Strategy (theme · usp · vehicles) → Execution (formatMenu) → Synthesis
+     * (brandStatement · idealFan · ideationPrompt). Sits BESIDE persona/backstory/
+     * audienceICP (which stay as roots) and governs theme/hook/vehicle/format/delivery
+     * ONLY — identity/body/wardrobe/continuity locks are untouched by this layer.
+     * Optional: pre-framework D1 profiles keep parsing; omitted → generator behaves
+     * exactly as before (no Theme Governor, no persona-biased draw).
+     */
+    contentPersona: z.object({
+      personaTraits: z.array(z.string()).length(3),  // 2 core traits + 1 outlier (the uncopyable bit)
+      resources: z.string(),          // filming reality: filmer? location? camera-confidence? cadence → sets the FORMAT MENU
+      theme: z.string(),              // emotional lane, CONGRUENT across every post
+      usp: z.string().optional(),     // hard-to-copy standout; DON'T invent if none
+      vehicles: z.array(z.string()),  // what she films; swappable
+      formatMenu: z.array(z.string()),// allowed formats given resources
+      brandStatement: z.string(),     // "She is a [traits] [look] whose content is [theme]+[vehicle] that feels like [payoff] for [ideal fan]."
+      idealFan: z.string(),           // who opens the wallet (not follower intent)
+      ideationPrompt: z.string(),     // reusable line the synth path runs
+    }).optional(),
   }),
   voice: z.object({
     captionStyle: z.string(),       // "3-8 words lowercase, 1 emoji max, no apostrophes"
@@ -661,6 +683,10 @@ export const IdeationSchema = z.object({
   angle: z.string(),                // one-paragraph: what this treatment does differently
   keptFromOriginal: z.array(z.string()),   // which mustKeep items are honored (traceability)
   reinvented: z.array(z.string()),         // which swappable surfaces were re-imagined, and how
+  /** Theme Governor (2026-08-17): how this ideation honors the profile's contentPersona
+   *  theme. Required by the prompt when world.contentPersona is set; optional here so
+   *  pre-framework rows and persona-less profiles keep parsing. */
+  themeFit: z.string().optional(),
   whyItWorksForProfile: z.string(), // the OG mechanism re-aimed at THIS profile's ICP
   creativeBrief: z.string(),
   videoModel: z.object({ choice: VideoModelChoiceSchema, reason: z.string() }),

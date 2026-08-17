@@ -27,6 +27,7 @@ import {
   hardStripNsfwForLlm, planSegments, type LintViolation,
 } from '../generate/rules';
 import { NEUTRAL_PROFILE } from '../generate/neutral';
+import { sampleSurpriseSources } from '../generate/surprise';
 import {
   buildGeneratorInstruction, buildGeneratorRepairPrompt, buildGeneratorUserMessage, buildLintRepairPrompt,
   buildSynthesisDigest, buildSynthesisUserMessage,
@@ -39,7 +40,8 @@ const RequestBase = z.object({
    *  optional there; defaults to the first resolved fusion source. */
   formatId: z.string().optional(),
   /** synthesize (§10) only: 2–4 library blueprints to fuse. Omit for "surprise me" — the
-   *  server auto-selects the top-scoring, archetype-diverse blueprints. */
+   *  server draws a fresh weighted-random, archetype-diverse set from the whole
+   *  high-scoring library on every press (see selectSurpriseFormatIds). */
   formatIds: z.array(z.string()).min(2).max(4).optional(),
   /** Omit for the default character-neutral run; pass a profile id to bind identity (optional layer). */
   profileId: z.string().default('neutral'),
@@ -83,20 +85,28 @@ const GeneratedBeatSchema = BeatGenerationSchema.extend({
 /** What the LLM owns: formula + ideations. Ids/versions/timestamps are ours.
  *  No .min/.max on the array — Gemini's decoder rejects array bounds on large
  *  item schemas (see geminiSafeSchema); the count is enforced below instead. */
+// virality forecast, edit plan, lip-sync plan, continuity lock, and per-beat
+// filming fields are REQUIRED on new runs (optional in the stored IdeationSchema
+// only so old rows keep parsing)
+const LlmIdeationExtension = {
+  virality: ViralityForecastSchema,
+  editPlan: EditPlanSchema,
+  lipSyncPlan: LipSyncPlanSchema,
+  continuityLock: ContinuityLockSchema.optional(),   // omission → DNA-derived default (rules.ts)
+  beats: z.array(GeneratedBeatSchema),
+};
 const LlmOutputSchema = z.object({
   formulaExtracted: z.string(),
-  // virality forecast, edit plan, lip-sync plan, continuity lock, and per-beat
-  // filming fields are REQUIRED on new runs (optional in the stored IdeationSchema
-  // only so old rows keep parsing)
-  ideations: z.array(IdeationSchema.extend({
-    virality: ViralityForecastSchema,
-    editPlan: EditPlanSchema,
-    lipSyncPlan: LipSyncPlanSchema,
-    continuityLock: ContinuityLockSchema.optional(),   // omission → DNA-derived default (rules.ts)
-    beats: z.array(GeneratedBeatSchema),
-  })),
+  ideations: z.array(IdeationSchema.extend(LlmIdeationExtension)),
 });
 const LLM_JSON_SCHEMA = z.toJSONSchema(LlmOutputSchema) as Record<string, unknown>;
+// Persona runs (Theme Governor): Gemini's constrained decoding REQUIRES themeFit; zod
+// validation stays on the lenient base schema — a dropped optional field must never
+// 502 a paid run (Jul 26 outage rule).
+const LLM_JSON_SCHEMA_PERSONA = z.toJSONSchema(z.object({
+  formulaExtracted: z.string(),
+  ideations: z.array(IdeationSchema.extend({ ...LlmIdeationExtension, themeFit: z.string() })),
+})) as Record<string, unknown>;
 
 type LlmIdeation = z.infer<typeof LlmOutputSchema>['ideations'][number];
 type VariantResult = { formula: string; ideation: LlmIdeation };
@@ -116,6 +126,14 @@ const VARIANT_HINTS = [
   'This run produces VARIANT 1 of 3: take the most natural, highest-probability scenario mapping for this profile (her most-used location + default wardrobe key).',
   'This run produces VARIANT 2 of 3: take a clearly DIFFERENT location and wardrobe mapping than the most obvious choice — same filming, a different room of her world.',
   'This run produces VARIANT 3 of 3: take the boldest natural in-world mapping (an unexpected but plausible location/prop pairing) — same filming, maximum freshness.',
+];
+// Synthesize-mode hints rotate which source's HOOK becomes the fusion's spine — the
+// location/wardrobe hints above let all 3 fusions converge on the same (strongest)
+// hook, which compounded the "always the same idea" feeling (Aug 17 brief).
+const SYNTH_VARIANT_HINTS = [
+  'This run produces VARIANT 1 of 3: build the fusion around the single STRONGEST scroll-stop hook mechanism in the source set, mapped to her most natural location + wardrobe.',
+  "This run produces VARIANT 2 of 3: pick a DIFFERENT source's hook mechanism as the spine — NOT the strongest/most obvious one — and set it in a different part of her world.",
+  'This run produces VARIANT 3 of 3: build around the most UNEXPECTED mechanism combination in the set that still plausibly stops the scroll for her audience — maximum freshness.',
 ];
 
 function violationsToText(violations: LintViolation[]): string {
@@ -195,25 +213,46 @@ async function loadProfile(req: Request, env: Env, profileId: string): Promise<M
   return ModelProfileSchema.parse(JSON.parse(row.profile)) as ModelProfile;
 }
 
-/** §10 "surprise me" retrieval: top-scoring blueprint ids, biased for ARCHETYPE DIVERSITY
- *  (fuse different mechanisms, not N near-duplicates). Falls back to pure score to fill N. */
-async function selectTopFormatIds(env: Env, n: number): Promise<string[]> {
+/** §10 "surprise me" retrieval (rewritten Aug 17 — the sameness bug): the old version
+ *  was ORDER BY score + greedy dedupe with NO randomness and NO profileId — every press
+ *  fused the identical 3 blueprints for every model ("always feral"), leaving the rest
+ *  of the library unused. Now: candidate pool = ALL scored formats → score-weighted
+ *  random sample with archetype spread (sampleSurpriseSources), excluding the source
+ *  sets of THIS profile's last 2 surprise runs (sourceFormatIds is already persisted
+ *  in the run output), shuffled so the aesthetic anchor (dnas[0]) rotates too. */
+async function selectSurpriseFormatIds(
+  env: Env, n: number, profileId: string,
+  formatMenu?: string[],   // contentPersona.formatMenu → lane bias (undefined = unbiased, pre-framework behavior)
+): Promise<string[]> {
   const { results } = await env.DB.prepare(
-    `SELECT id, format_type FROM formats
+    // No LIMIT: a top-N cut left 4 whole archetypes (all sub-60 scores) permanently
+    // outside the pool. score²-weighting in the sampler is the quality bias instead.
+    `SELECT id, format_type, virality_score FROM formats
      WHERE schema_version != '0-legacy' AND virality_score IS NOT NULL
-     ORDER BY virality_score DESC LIMIT 24`,
-  ).all<{ id: string; format_type: string | null }>();
-  const seenType = new Set<string>();
-  const picked: string[] = [];
-  for (const r of results) {           // pass 1: one per distinct archetype, highest-scoring first
-    const t = r.format_type ?? '?';
-    if (!seenType.has(t)) { seenType.add(t); picked.push(r.id); if (picked.length >= n) return picked; }
+     ORDER BY virality_score DESC`,
+  ).all<{ id: string; format_type: string | null; virality_score: number }>();
+  // Don't-repeat memory: the exact ids fused by the last 2 surprise-me runs for this profile.
+  const recent = await env.DB.prepare(
+    `SELECT json_extract(output, '$.sourceFormatIds') AS ids FROM generations
+     WHERE profile_id = ? AND json_extract(output, '$.fidelityMode') = 'synthesize'
+     ORDER BY created_at DESC LIMIT 2`,
+  ).bind(profileId).all<{ ids: string | null }>();
+  const exclude = new Set<string>();
+  for (const r of recent.results) {
+    try { for (const id of JSON.parse(r.ids ?? '[]') as string[]) exclude.add(id); } catch { /* tolerate old rows */ }
   }
-  for (const r of results) {           // pass 2: fill remaining by score
-    if (picked.length >= n) break;
-    if (!picked.includes(r.id)) picked.push(r.id);
+  const menu = formatMenu && formatMenu.length > 0 ? new Set(formatMenu) : undefined;
+  if (menu) {
+    // Persona lane bias — log the split, never silently drop (types stay drawable at ×0.15).
+    const types = [...new Set(results.map((r) => r.format_type ?? '?'))];
+    console.log(`surprise ${profileId}: persona lane bias — up-weighted [${types.filter((t) => menu.has(t)).join(', ')}], down-weighted ×0.15 [${types.filter((t) => !menu.has(t)).join(', ')}]`);
   }
-  return picked;
+  const ids = sampleSurpriseSources(
+    results.map((r) => ({ id: r.id, formatType: r.format_type, score: r.virality_score })), n, exclude,
+    Math.random, menu,
+  );
+  console.log(`surprise ${profileId}: drew [${ids.join(', ')}]`);
+  return ids;
 }
 
 type SynthesisLoaded = { dnas: FormatDna[]; profile: ModelProfile; sourceIds: string[]; anchorVersion: number };
@@ -290,13 +329,14 @@ async function runSingleVariant(
     e instanceof Error && /blocked the input/i.test(e.message);
 
   const systemInstruction =
-    `${buildGeneratorInstruction(profile, variationStrength, 1, fidelityMode, unitCount, segmentPlan)}\n\n# VARIANT DIRECTIVE\n${VARIANT_HINTS[variant]}`;
+    `${buildGeneratorInstruction(profile, variationStrength, 1, fidelityMode, unitCount, segmentPlan)}\n\n# VARIANT DIRECTIVE\n${(synth ? SYNTH_VARIANT_HINTS : VARIANT_HINTS)[variant]}`;
   const call = (text: string, model = env.GEMINI_MODEL) => callGeminiJson({
     apiKey: activeKey,
     model,
     systemInstruction,
     parts: [{ text }],
-    jsonSchema: LLM_JSON_SCHEMA,
+    // Theme Governor: persona profiles get the schema variant with themeFit REQUIRED.
+    jsonSchema: profile.world.contentPersona ? LLM_JSON_SCHEMA_PERSONA : LLM_JSON_SCHEMA,
     temperature: 0.7,   // creative fill — matches the old generator's temperature
   });
 
@@ -383,8 +423,17 @@ async function runGeneration(
   let sourceIds: string[] | undefined;      // synthesize only — the fused blueprint set
   let sources: FormatDna[] | undefined;     // synthesize only — inline-fallback fusion sources
   if (fidelityMode === 'synthesize') {
-    // "surprise me" = no explicit sources → auto-select top-scoring, archetype-diverse.
-    const ids = formatIds ?? await selectTopFormatIds(env, SYNTHESIS_SOURCE_COUNT);
+    // "surprise me" = no explicit sources → fresh weighted-random, archetype-diverse draw
+    // (3 or 4 sources per press so fusion richness varies too — schema max is 4),
+    // lane-biased by the profile's contentPersona.formatMenu when present.
+    let ids = formatIds;
+    if (!ids) {
+      const p = await loadProfile(req, env, profileId);
+      if (p instanceof Response) return p;
+      ids = await selectSurpriseFormatIds(
+        env, SYNTHESIS_SOURCE_COUNT + (Math.random() < 0.5 ? 1 : 0), profileId,
+        p.world.contentPersona?.formatMenu);
+    }
     const s = await loadSynthesisSources(req, env, ids, profileId);
     if (s instanceof Response) return s;
     dna = s.dnas[0]!; profile = s.profile; formatVersion = s.anchorVersion;

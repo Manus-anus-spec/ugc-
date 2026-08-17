@@ -41,6 +41,26 @@ You are given SEVERAL proven viral blueprints (their MECHANISMS only — hook ty
 - For each ideation: keptFromOriginal = which mechanism you took from which source (name them, for traceability); reinvented = the fresh surface you invented.
 The ${ideationCount} ideations must be genuinely DIFFERENT fusions (a different hook-spine or a different scenario), not paraphrases. Variation strength is ignored in synthesize mode.`;
 
+/** Theme Governor (GriffinOFM Content Persona Framework, 2026-08-17): when the profile
+ *  carries world.contentPersona, every ideation — all three modes — is governed by the
+ *  model's THEME (emotional lane → fans), with the VEHICLE as the swappable views-getter.
+ *  Placed immediately after the Prime Directive so it CONSTRAINS it. Governs theme/hook/
+ *  vehicle/format/delivery/targeting ONLY — identity, face, body, wardrobe, and
+ *  continuity output stay owned by their locks (identityLock/looks/body/continuityLock). */
+const THEME_GOVERNOR = (cp: NonNullable<ModelProfile['world']['contentPersona']>, fidelityMode: FidelityMode) => `# THEME GOVERNOR — THE PERSONA IS THE LANE (this constrains the Prime Directive above)
+Brand statement (HARD constraint — nothing in any ideation may contradict it):
+"${cp.brandStatement}"
+- THEME (the emotional lane, congruent across EVERY post — this is what converts viewers into fans): ${cp.theme}
+- Persona traits (color every hook, tone, and delivery): ${cp.personaTraits.join(' · ')}${cp.usp ? `\n- USP (lean on it — it is hard to copy): ${cp.usp}` : ''}
+- Vehicles (what she films — swappable, pick what serves the idea): ${cp.vehicles.join(' · ')}
+- FORMAT MENU (her filming reality: ${cp.resources}) — prefer these formats: ${cp.formatMenu.join(', ')}
+- IDEAL FAN (aim every payoff at the person who opens the wallet): ${cp.idealFan}
+- Ideation seed: ${cp.ideationPrompt}
+THE FILTER: if a candidate hook, vehicle, or scenario contradicts the brand statement, RESHAPE it until it serves the theme or DISCARD it and pick another — never soften it into a half-fit.${fidelityMode === 'synthesize' ? `
+SPINE RULE (synthesize): choose the fused spine for THEME FIT, not raw hook strength — the mechanism that best serves the theme wins even when another source's hook is more distinctive.` : ''}
+REQUIRED: every ideation must fill "themeFit" — one short line naming how it honors the theme.
+SCOPE: the persona decides WHAT she does and HOW it feels. It does NOT change identity, face, body, wardrobe, or continuity output — those come from their own locks exactly as usual.`;
+
 export function buildGeneratorInstruction(
   profile: ModelProfile, strength: VariationStrength, ideationCount: number,
   fidelityMode: FidelityMode, sourceBeatCount: number, segmentPlan?: string,
@@ -53,10 +73,11 @@ export function buildGeneratorInstruction(
   const directive = fidelityMode === 'reproduce' ? REPRODUCE_DIRECTIVE(ideationCount, sourceBeatCount, segmentPlan)
     : fidelityMode === 'synthesize' ? SYNTHESIZE_DIRECTIVE(ideationCount)
       : ADAPT_DIRECTIVE(strength, ideationCount);
+  const cp = profile.world.contentPersona;
   return `You are a content ${engineKind} and production engine for AI-generated short-form video. You receive ${inputKind} and a MODEL PROFILE (the creator identity and world to produce for). You output ${ideationCount} DISTINCT ideations as one JSON object matching the provided schema.
 
 ${directive}
-
+${cp ? `\n${THEME_GOVERNOR(cp, fidelityMode)}\n` : ''}
 ${profile.id === 'neutral' ? `# CHARACTER-NEUTRAL MODE (this run)
 This run is bound to NO creator. The output must be usable by ANY model with ANY reference image:
 - Refer to the person ONLY as "the subject" (or "the subject from the reference image"). Never a name, never "she/her looks like…" as identity.
