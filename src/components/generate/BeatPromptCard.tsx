@@ -59,6 +59,23 @@ export function BeatPromptCard({ beat, beatNumber, videoFormat }: {
             {beat.expression && <span className="text-[11px] text-dim">{beat.expression}</span>}
           </div>
         )}
+        {beat.productionRoute && beat.productionRoute.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1 pt-0.5">
+            {beat.productionRoute.map((s) => (
+              <span
+                key={s.step}
+                title={`${s.inputAsset}${s.onModerationFlag ? `\n\n⚑ on moderation flag: ${s.onModerationFlag}` : ''}`}
+                className={`text-[10px] font-mono rounded px-1.5 py-0.5 border cursor-help
+                  ${s.conditional ? 'border-dashed border-dim/60 text-dim' : 'border-hairline text-cream/80'}`}
+              >
+                {s.step}·{s.tool}{s.conditional ? ' (only if needed)' : ''}{s.onModerationFlag ? ' ⚑' : ''}
+              </span>
+            ))}
+          </div>
+        )}
+        {beat.challengeLog && beat.challengeLog.length > 0 && (
+          <p className="text-[10px] font-mono text-electric/80 pt-0.5">🛠 challenge pass fixed: {beat.challengeLog.join(' · ')}</p>
+        )}
       </header>
       <div className="flex items-center gap-1 px-3 pt-2.5">
         {(['nb', 'sd', 'motion'] as Tool[]).map((t) => (
