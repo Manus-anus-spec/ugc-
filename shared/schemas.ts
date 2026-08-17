@@ -461,6 +461,14 @@ export const ModelProfileSchema = z.object({
     faceSheetId: z.string().optional(),
     bodySheetId: z.string().optional(),
     strategy: z.enum(['sheet_ids', 'single_ref_base64']),  // Naomi uses NB single-ref+base64
+    /** §2 (Aug 17): the per-model REF KIT — 4 tight face crops + 3 approved HEADLESS body
+     *  crops, living at the model root `_LOCKED/` (NOT under 03-content/ — §5). Every
+     *  image-generation call attaches ALL of them as base64; the production route names
+     *  them so executors can't skip the attachment. Optional: pre-kit profiles keep parsing. */
+    refKit: z.object({
+      faceCrops: z.array(z.string()),   // paths/ids of the 4 locked face crops
+      bodyCrops: z.array(z.string()),   // paths/ids of the 3 approved headless body crops
+    }).optional(),
   }),
   identityLock: z.object({
     opener: z.string(),             // "Refer to the girl in the reference images. …"
@@ -485,6 +493,12 @@ export const ModelProfileSchema = z.object({
     skin: z.string(),               // texture + tone behavior ("natural texture, visible pores, soft tan lines")
     heightVibe: z.string().optional(),      // "reads ~5'6, long-legged"
     sdEnhancementNotes: z.string(), // exactly how the Seedream pass should shape the body
+    /** §2 (Aug 17): COMMAND-style body descriptor for the GPT-Image body-match LEAD —
+     *  hedges ("natural, not exaggerated") render LEAN on GPT-image, so this one COMMANDS
+     *  the shape ("full round bust that sits high, deeply snatched waist, curvy hips").
+     *  The LEAD injector caps it with "curvy but LEAN, NOT thick, NOT a BBL" automatically.
+     *  Optional: falls back to `${build}; ${proportions}`. */
+    leadDescriptor: z.string().optional(),
   }).optional(),
   world: z.object({
     locationWhitelist: z.array(z.string()),
@@ -563,10 +577,17 @@ export const ModelProfileSchema = z.object({
  *  the documented SD face-drift fix, never an implied side step. */
 export const ProductionRouteStepSchema = z.object({
   step: z.number().int(),           // 1-based order
-  tool: z.enum(['nano_banana_2', 'seedream_4.5', 'face_restore', 'kling_3', 'cdance_2', 'lipsync']),
+  tool: z.enum(['gpt_image_2', 'nano_banana_2', 'seedream_4.5', 'face_restore', 'kling_3', 'cdance_2', 'lipsync']),
   inputAsset: z.string(),           // "hero still from beat 0" | "prev clip last frame" | "SD output"
   outputAsset: z.string(),          // what this step produces, named so later steps can reference it
   promptField: z.string(),          // which BeatGeneration field feeds it: "nbPrompt" | "sdPrompt" | "motionPrompt" | "none"
+  /** Aug 17: step runs only when its condition is met (e.g. the Seedream body pass
+   *  fires ONLY if GPT-Image-2 did not resolve the body). Omitted = unconditional. */
+  conditional: z.boolean().optional(),
+  /** §3 (Aug 17): what the executor does when GPT-Image-2 flags "content sensitive" —
+   *  the strip→retry→route-to-Seedream→NB-fallback chain, spelled out per step so the
+   *  flow never just fails. Executors follow this text; the filter is stochastic. */
+  onModerationFlag: z.string().optional(),
 });
 
 export const BeatGenerationSchema = z.object({
@@ -605,6 +626,9 @@ export const BeatGenerationSchema = z.object({
   sourceBeatIndices: z.array(z.number().int()).optional(),
   firstFrameSource: FirstFrameSourceSchema.optional(),  // hero_still | prev_clip_last_frame | fresh_nb
   productionRoute: z.array(ProductionRouteStepSchema).optional(),
+  /** Part B self-challenge (2026-08-17): what the baked-in critique pass changed on this
+   *  beat's motionPrompt (e.g. "added subtitle ban"). Optional — absent means no fixes. */
+  challengeLog: z.array(z.string()).optional(),
 });
 
 /**

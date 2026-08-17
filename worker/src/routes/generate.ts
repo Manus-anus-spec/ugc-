@@ -80,7 +80,7 @@ const GeneratedBeatSchema = BeatGenerationSchema.extend({
   startsOnCut: z.boolean().optional(),
   sourceBeatIndex: z.number().int().optional(),
   firstFrameSource: FirstFrameSourceSchema.optional(),
-}).omit({ productionRoute: true });
+}).omit({ productionRoute: true, challengeLog: true });   // both built/filled server-side, never LLM'd
 
 /** What the LLM owns: formula + ideations. Ids/versions/timestamps are ours.
  *  No .min/.max on the array — Gemini's decoder rejects array bounds on large

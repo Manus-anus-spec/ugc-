@@ -231,6 +231,22 @@ export const BELLE_PROFILE: ModelProfile = {
     // FABLE5 §4.3 — injected into every on-camera dialogue line. DRAFT for Khian's review.
     accent: 'soft warm Texas drawl, unhurried and natural — not theatrical, not a caricature',
   },
+  toolRules: {
+    ...structuredClone(SAV_PROFILE.toolRules),
+    video: {
+      ...structuredClone(SAV_PROFILE.toolRules.video),
+      // ⭐ HOUSE-STYLE ANCHOR (Part B, Aug 17): the generator studies confirmedWorkingExamples
+      // as the voice/rhythm anchor for ONE-SHOT choreography sheets — the main output now.
+      // 🔑 KHIAN SEEDS HERE: paste validated Belle one-shot keepers (the hose/watermelon
+      // session keepers + future ones) and mirror them into her LIVE D1 profile via
+      // PUT /profiles/belle. The inherited Sav examples below are bedroom/mirror style —
+      // REPLACE them for Belle; ranch one-shots should follow: look declaration first →
+      // phase-flow action → one camera behavior per phase → ambient → constraints.
+      confirmedWorkingExamples: [
+        ...structuredClone(SAV_PROFILE.toolRules.video.confirmedWorkingExamples),
+      ],
+    },
+  },
   contentPolicy: {
     nsfwAllowed: false,   // SFW IG account for now (pivot: NSFW/Telegram later)
     sanitizeMap: SANITIZE_MAP,

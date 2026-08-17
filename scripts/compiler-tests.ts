@@ -14,7 +14,8 @@ import {
   needsFaceForwardFix, stripIdentityDescriptors, wrapIdentityLock,
   KLING_HANDHELD_TAIL, applySeedanceLeanTail,
   ensureIdleBehavior, ensureAmbientSound, ensureStaticCameraDefault, stripBodyWordFull, ensureAccentDelivery,
-  sanitizeImageModeration,
+  sanitizeImageModeration, challengeMotionPrompt, collectRepeatedCameraLines,
+  ANTI_SLOP_SUFFIX, MOUTH_BUSY, ensureBodyLead, applySwimwearWorkaround,
 } from '../worker/src/generate/rules';
 import { BELLE_PROFILE } from '../worker/seeds/profiles';
 import { buildGeneratorInstruction, buildSynthesisDigest } from '../worker/src/generate/prompt';
@@ -213,11 +214,11 @@ check('kling handheld block appended LAST', klinged.trimEnd().replace(/\.$/, '')
 const midBlock = `Raw iPhone look, ${KLING_HANDHELD_TAIL}, she stirs and laughs at the counter.`;
 const klingMoved = applyModelPositionBlocks(midBlock, 'kling_3');
 check('kling block MOVED to end when mid-prompt', klingMoved.trimEnd().replace(/\.$/, '').toLowerCase().endsWith(KLING_HANDHELD_TAIL), klingMoved);
-// FABLE5 §6 lean mode: the Seedance production path is applySeedanceLeanTail (used in
-// enforceIdeation) — ONE consolidated line, NO obsolete "no smoothness/no stabilization".
+// Part B (Aug 17): the "no smoothness, no stabilization" pair is REINSTATED in the lean
+// tail — Khian's live session proved it load-bearing on 2.0 (drifts gimbal-smooth without it).
 const dnaLean = { setting: { locationType: 'kitchen' } } as unknown as FormatDna;
 const leanTail = applySeedanceLeanTail('Raw iPhone look, she stirs the pot and grins.', dnaLean, undefined);
-check('seedance lean tail: no obsolete stabilization pair', !/no smoothness|no stabilization/i.test(leanTail), leanTail);
+check('seedance lean tail carries the load-bearing negation pair', /no smoothness, no stabilization/i.test(leanTail), leanTail);
 check('seedance lean tail: single negatives line with subtitle+watermark+music bans', /no music/i.test(leanTail) && /subtitles/i.test(leanTail) && /no watermark/i.test(leanTail), leanTail);
 check('seedance lean tail: carries phone-mic audio + derived ambient', /phone-mic audio/i.test(leanTail), leanTail);
 check('seedance lean tail idempotent', applySeedanceLeanTail(leanTail, dnaLean, undefined) === leanTail);
@@ -268,8 +269,14 @@ const pp = buildPostProcessing(dnaWithTells);
 check('post-processing derives from tells', pp.fps === 30 && /stronger in shadows/.test(pp.addGrain) && pp.reencodeProfile === 'phone-HEVC', JSON.stringify(pp));
 
 // ── production route (Part B.7/G.1) ──
+// Aug 17 one-shot image method: GPT-Image-2 one pass; Seedream body pass CONDITIONAL.
 const heroRoute = buildProductionRoute(0, 'hero_still', 'kling_3', false);
-check('hero route: nb → sd → face_restore → kling', heroRoute.map((s) => s.tool).join(',') === 'nano_banana_2,seedream_4.5,face_restore,kling_3', heroRoute.map((s) => s.tool).join(','));
+check('hero route: gpt-image → (conditional sd) → face_restore → kling', heroRoute.map((s) => s.tool).join(',') === 'gpt_image_2,seedream_4.5,face_restore,kling_3', heroRoute.map((s) => s.tool).join(','));
+check('seedream pass is CONDITIONAL, gpt-image + video are not',
+  heroRoute.find((s) => s.tool === 'seedream_4.5')!.conditional === true
+  && !heroRoute.find((s) => s.tool === 'gpt_image_2')!.conditional
+  && !heroRoute.find((s) => s.tool === 'kling_3')!.conditional);
+check('conditional pass says WHEN it fires', /ONLY if the body did not resolve/.test(heroRoute.find((s) => s.tool === 'seedream_4.5')!.inputAsset));
 const chainRoute = buildProductionRoute(2, 'prev_clip_last_frame', 'cdance_2', true);
 check('chained route: per-hop face check → video → lipsync', chainRoute.map((s) => s.tool).join(',') === 'face_restore,cdance_2,lipsync', chainRoute.map((s) => s.tool).join(','));
 check('chained route names the drift check', /drift/.test(chainRoute[0]!.outputAsset));
@@ -280,11 +287,12 @@ const dnaTwoBeats = {
   audio: { syncType: 'none' }, textOverlays: { present: false },
 } as unknown as FormatDna;
 const shortIdeation = { beats: [{ clipIndex: 0, durationSec: 1.4, action: 'laughs', motionBeat: 'bounce', motionPrompt: 'medium shot, hold ~1.4s, she blinks', dialogue: undefined }] } as unknown as Ideation;
-// (the two same-scene beats above now merge into ONE segment — mismatch needs an
-// unmergeable pair: camera angle change forces 2 segments vs the 1-beat ideation)
+// (the two same-scene beats above now merge into ONE segment — mismatch needs a
+// genuinely unmergeable pair: a-roll ↔ b-roll (different subject) forces 2 segments.
+// Aug 17: angle/size/match no longer split — only shotType or >15s do.)
 const dnaTwoSegs = {
   ...dnaTwoBeats,
-  beats: [SRC_BEAT, { ...SRC_BEAT, index: 2, clipIndex: 2, startSec: 3.4, endSec: 5.0, cameraAngle: 'overhead' }],
+  beats: [SRC_BEAT, { ...SRC_BEAT, index: 2, clipIndex: 2, startSec: 3.4, endSec: 5.0, shotType: 'broll', brollSubject: 'hands plating tacos' }],
 } as unknown as FormatDna;
 check('fidelity lint catches segment-count mismatch in reproduce',
   lintFidelity(shortIdeation, dnaTwoSegs, 'reproduce').some((v) => v.problem.includes('generation segments')));
@@ -315,7 +323,7 @@ const dnaForLock = {
 const defLock = buildDefaultContinuityLock(dnaForLock);
 check('default continuity lock built from DNA', defLock.setDescription.includes('farmhouse kitchen') && defLock.colorTempK === 'warm ~3000K', JSON.stringify(defLock));
 
-// ── v3.3 generation segments (Jul 27 — Khian's 0.88s-clips fix) ──
+// ── generation segments — ONE-SHOT BY DEFAULT (Aug 17 rewrite of the Jul 27 grouper) ──
 const mkBeat = (i: number, start: number, end: number, over: Record<string, unknown> = {}) =>
   ({ ...SRC_BEAT, index: i, clipIndex: i, startSec: start, endSec: end, ...over }) as Beat;
 const fastBeats = [
@@ -323,14 +331,30 @@ const fastBeats = [
   mkBeat(4, 4.5, 9.2, { cameraAngle: 'overhead' }), mkBeat(5, 9.2, 10.0),
 ];
 const segs = planSegments(fastBeats);
-check('sub-second beats merge into one take', segs.length === 3 && segs[0]!.beatIndices.join(',') === '0,1,2,3', JSON.stringify(segs));
-check('camera-angle change breaks the segment', segs[1]!.beatIndices.join(',') === '4');
-const longBeats = [mkBeat(0, 0, 3), mkBeat(1, 3, 6), mkBeat(2, 6, 9), mkBeat(3, 9, 12)];
+// Acceptance 1: a fast-cut ≤15s source that previously produced 3 takes now = ONE take.
+check('fast-cut ≤15s source = ONE take (was 3 segments before Aug 17)',
+  segs.length === 1 && segs[0]!.beatIndices.join(',') === '0,1,2,3,4,5', JSON.stringify(segs));
+check('angle change is cut cadence, NOT a take break', planSegments([mkBeat(0, 0, 4), mkBeat(1, 4, 8, { cameraAngle: 'overhead' })]).length === 1);
+check('ECU→WS jump is cut cadence, NOT a take break', planSegments([mkBeat(0, 0, 0.9, { shotSize: 'ECU' }), mkBeat(1, 0.9, 2.0, { shotSize: 'WS' })]).length === 1);
+check('CU→MS merges (as before)', planSegments([mkBeat(0, 0, 0.9, { shotSize: 'CU' }), mkBeat(1, 0.9, 2.0, { shotSize: 'MS' })]).length === 1);
+check('a-roll ↔ b-roll ALWAYS breaks (different subject in frame)',
+  planSegments([mkBeat(0, 0, 4), mkBeat(1, 4, 6, { shotType: 'broll' }), mkBeat(2, 6, 10)]).length === 3);
+// Acceptance 2: >15s splits into the FEWEST, LONGEST takes — balanced, none under 5s.
+const longBeats = [mkBeat(0, 0, 4.5), mkBeat(1, 4.5, 9), mkBeat(2, 9, 13.5), mkBeat(3, 13.5, 18)];
 const segsCap = planSegments(longBeats);
-check('segment span capped at 8s source', segsCap.length === 2 && segsCap[0]!.beatIndices.join(',') === '0,1', JSON.stringify(segsCap));
-const wsBeat = mkBeat(1, 0.9, 2.0, { shotSize: 'WS' });
-check('ECU→WS shot jump breaks (no punch-in possible)', planSegments([mkBeat(0, 0, 0.9, { shotSize: 'ECU' }), wsBeat]).length === 2);
-check('CU→MS merges (punch-in-able)', planSegments([mkBeat(0, 0, 0.9, { shotSize: 'CU' }), mkBeat(1, 0.9, 2.0, { shotSize: 'MS' })]).length === 1);
+check('18s same-scene → 2 balanced takes (9s+9s), not 15s+3s sliver',
+  segsCap.length === 2 && segsCap.every((s) => s.endSec - s.startSec >= 5 && s.endSec - s.startSec <= 15),
+  JSON.stringify(segsCap.map((s) => s.endSec - s.startSec)));
+const beats17 = [mkBeat(0, 0, 3), mkBeat(1, 3, 6), mkBeat(2, 6, 9), mkBeat(3, 9, 12), mkBeat(4, 12, 14), mkBeat(5, 14, 17)];
+const segs17 = planSegments(beats17);
+check('17s → 2 takes, both ≥5s (no sliver tail)',
+  segs17.length === 2 && segs17.every((s) => s.endSec - s.startSec >= 5),
+  JSON.stringify(segs17.map((s) => `${s.startSec}-${s.endSec}`)));
+const beats31 = Array.from({ length: 31 }, (_, i) => mkBeat(i, i, i + 1));
+check('31s → 3 balanced takes ≤15s each, none under 5s',
+  planSegments(beats31).length === 3 && planSegments(beats31).every((s) => s.endSec - s.startSec >= 5 && s.endSec - s.startSec <= 15),
+  JSON.stringify(planSegments(beats31).map((s) => s.endSec - s.startSec)));
+check('15s exactly = still one take', planSegments([mkBeat(0, 0, 7.5), mkBeat(1, 7.5, 15)]).length === 1);
 
 const bare3 = 'She cooks through the sequence, laughing between bites.';
 const timed = ensureSegmentTimeline(bare3, fastBeats, [0, 1, 2, 3]);
@@ -356,7 +380,14 @@ check('segment clip gets one slice per covered source beat', (segClip.slices ?? 
 check('slices tile the take (0.3 lead, contiguous)', segClip.slices![0]!.useInSec === 0.3 && segClip.slices![1]!.useInSec === 1.2, JSON.stringify(segClip.slices!.slice(0, 2)));
 check('all slices share one generated take ≥5s', segClip.slices!.every((s) => s.generatedDurationSec === segClip.slices![0]!.generatedDurationSec && s.generatedDurationSec >= 5));
 check('slice cuts land on the beat map', segClip.slices!.every((s) => s.landsOnBeat), JSON.stringify(segClip.slices));
-check('segment plan text lists takes + timelines', buildSegmentPlanText(fastBeats, segs).includes('ONE continuous take') && buildSegmentPlanText(fastBeats, segs).includes('Segment 3'));
+check('segment plan text lists takes + timelines', buildSegmentPlanText(fastBeats, segs).includes('ONE continuous take') && buildSegmentPlanText(fastBeats, segs).includes('Segment 1'));
+check('multi-take plan text numbers every take', buildSegmentPlanText(beats17, segs17).includes('Segment 2'));
+
+// ── ONE-SHOT LAW present in the generator instruction (all modes) ──
+for (const m of ['adapt', 'reproduce', 'synthesize'] as const) {
+  const oneShotInstr = buildGeneratorInstruction(BELLE_PROFILE, 'close', 1, m, 2);
+  check(`ONE-SHOT LAW in ${m} instruction`, /ONE-SHOT LAW/.test(oneShotInstr) && /FEWEST, LONGEST takes/.test(oneShotInstr) && /never plan a clip under 5s/.test(oneShotInstr));
+}
 
 // ── mangled-marker re-injection (Jul 26 — rewrite echoed "CAMERA(source):" but dropped tokens) ──
 const mangled = 'She laughs mid-stir. CAMERA(source): , hold ~1.4s.';   // marker survived, shot size lost
@@ -366,7 +397,8 @@ check('mangled CAMERA(source) block gets missing tokens re-injected', reinjected
 // ── dialogue embed enforced, not asked (Jul 26) ──
 const dlgLine = 'come taste this before I change my mind';
 const noDlg = ensureDialogueEmbedded('Selfie angle, she stirs the pot and smirks at the lens.', dlgLine, 'cdance_2');
-check('missing dialogue EMBEDDED (cdance double-quote style, §6)', noDlg.includes(`"${dlgLine}"`) && !noDlg.includes(`{${dlgLine}}`), noDlg);
+// Part B (Aug 17): Seedance dialogue = CURLY BRACES, delivery tone outside (doc + live-validated).
+check('missing dialogue EMBEDDED (cdance curly-brace style)', noDlg.includes(`{${dlgLine}}`) && !noDlg.includes(`"${dlgLine}"`), noDlg);
 check('embedded dialogue passes the self-contained lint',
   !lintMotionPrompt(noDlg, SAV_PROFILE, 'MULTI_CLIP', 0, dlgLine).some((x) => x.problem.includes('dialogue')), noDlg);
 const hasDlg = `She grins — she says, lips synced: "${dlgLine}" — steam rising.`;
@@ -470,6 +502,111 @@ const digest = buildSynthesisDigest([srcA, srcB]);
 check('digest names both sources', /Taco freeze/.test(digest) && /Ranch reveal/.test(digest), digest);
 check('digest carries mechanisms + virality strengths', /freeze at 0:02/.test(digest) && /scroll-stop freeze/.test(digest), digest);
 check('digest tags archetype + score', /\[skit\]/.test(digest) && /virality 72/.test(digest), digest);
+
+// ── §1/§5 (Aug 17): garble fixes — negation-aware autofix, protected locked blocks, idempotency ──
+check('autofix keeps "NOT studio lighting" intact (was → "NOT soft natural lighting")',
+  autofixNbSlop('candid kitchen, NOT studio lighting.') === 'candid kitchen, NOT studio lighting.');
+check('autofix keeps "NOT airbrushed" intact (was → double-negative "NOT unretouched")',
+  autofixNbSlop('real skin, NOT airbrushed.') === 'real skin, NOT airbrushed.');
+check('autofix keeps "NO ring light" intact', autofixNbSlop('window lit, NO ring light.') === 'window lit, NO ring light.');
+check('autofix still fixes POSITIVE slop', /flat natural light/.test(autofixNbSlop('lit by studio lighting')) && /flat natural daylight/.test(autofixNbSlop('golden hour glow on her face')));
+check('§1 candid: staring-into-lens autofixed to off-lens', /off-lens/.test(autofixNbSlop('she is staring into the lens')));
+check('§1 lighting bans: warm glow / rim light / soft light replaced',
+  !/warm glow|rim light|soft light/i.test(autofixNbSlop('warm glow, rim light, soft lighting')));
+check('universal sanitize keeps "nude-rose" makeup shade (was → "off-camera-rose")',
+  applyUniversalSanitize('soft nude-rose lip') === 'soft nude-rose lip' && /off-camera/.test(applyUniversalSanitize('she is nude')));
+// The live 3×-closer / eaten-freckles garble: enforce chain must be idempotent on re-entry.
+const assembled = wrapIdentityLock(ensureNbRealism('Candid porch scene, she carries a hay bale.', dnaForLock), BELLE_PROFILE);
+const reentry = wrapIdentityLock(ensureNbRealism(stripIdentityDescriptors(autofixNbSlop(assembled), BELLE_PROFILE), dnaForLock), BELLE_PROFILE);
+const closerHead = BELLE_PROFILE.identityLock.closer.slice(0, 40);
+check('re-entrant NB chain: closer appears EXACTLY once (was 3× live)',
+  reentry.split(closerHead).length - 1 === 1, String(reentry.split(closerHead).length - 1));
+check('re-entrant NB chain: anti-slop suffix intact + freckles NOT eaten from locked blocks',
+  reentry.includes('visible pores and freckles') && /NOT airbrushed/.test(reentry) && !/pores and\s*,/.test(reentry), reentry.slice(-260));
+check('strip still removes leaked descriptors OUTSIDE locked blocks',
+  !/copper-red hair shines/.test(stripIdentityDescriptors('her copper-red hair shines in the sun', BELLE_PROFILE)));
+check('strip lookarounds: hyphen-compound survives (blue-green eyes garble)',
+  stripIdentityDescriptors('deep blue-teal water', BELLE_PROFILE) === 'deep blue-teal water');
+check('secondary-motion idempotent on paraphrased header (was stacking 2×)',
+  ensureSecondaryMotion('She turns. Secondary motion: her braid swings once.', undefined) === 'She turns. Secondary motion: her braid swings once.');
+check('MOUTH_BUSY: "takes a bite" busy, "bites her lip" NOT busy',
+  MOUTH_BUSY.test('she takes a bite of the taco') && !MOUTH_BUSY.test('she bites her lip and grins'));
+check('ANTI_SLOP_SUFFIX emitted verbatim by ensureNbRealism',
+  ensureNbRealism('Simple porch still.', dnaForLock).includes(ANTI_SLOP_SUFFIX));
+// Live Aug 17 finding: a closer carrying "visible pores and freckles" was silently
+// blocking the suffix append — the sentinel is now a suffix-unique phrase.
+check('suffix still appended when the CLOSER carries similar wording',
+  ensureNbRealism('Porch still. Realistic natural skin texture with visible pores and freckles, NOT airbrushed, NOT over-smoothed.', dnaForLock).includes(ANTI_SLOP_SUFFIX));
+// Live Aug 17 finding: LLM echoes NEAR-copies of the closer — sentence-level protection
+// must keep identity words inside any match-the-reference sentence intact.
+const echoed = 'She sweeps the barn aisle. Match the reference image face exactly — do not alter her copper-red hair, heavy natural freckles, or green blue-green eyes. Warm smile.';
+const echoStripped = stripIdentityDescriptors(echoed, BELLE_PROFILE);
+check('paraphrased closer echo NOT garbled (sentence-level protection)',
+  echoStripped.includes('copper-red hair, heavy natural freckles, or green blue-green eyes'), echoStripped);
+check('paraphrased echo does not lint as a leak',
+  !lintNbPrompt(`Raw iPhone footage aesthetic. ${echoed}`, BELLE_PROFILE, 0).some((x) => x.problem.includes('descriptor leaked')));
+
+// ── §2 (Aug 17): body-match LEAD + ref kit ──
+const leadProfile = {
+  ...BELLE_PROFILE,
+  body: {
+    build: 'slim hourglass', proportions: 'balanced', skin: 'freckled natural',
+    sdEnhancementNotes: 'gentle',
+    leadDescriptor: 'full round bust that sits high, deeply snatched waist, curvy hips',
+  },
+} as ModelProfile;
+const withLead = ensureBodyLead(wrapIdentityLock('She carries a hay bale across the porch.', leadProfile), leadProfile);
+check('§2 LEAD injected after the opener, commands the shape + LEAN cap',
+  withLead.startsWith(leadProfile.identityLock.opener)
+  && withLead.indexOf('body reference photos') < withLead.indexOf('hay bale')
+  && withLead.includes('deeply snatched waist') && withLead.includes('Curvy but LEAN, NOT thick, NOT a BBL.'), withLead.slice(0, 300));
+check('§2 LEAD idempotent', ensureBodyLead(withLead, leadProfile) === withLead);
+check('§2 no body block → prompt untouched', ensureBodyLead('Simple porch still.', BELLE_PROFILE) === 'Simple porch still.');
+check('§2 LEAD survives moderation-sanitize (span-protected), curvy stripped elsewhere',
+  sanitizeImageModeration(withLead).includes('curvy hips')
+  && !/curvy/.test(sanitizeImageModeration('a curvy silhouette by the window')));
+check('§3 new triggers: unbuttoned + stare neutralized',
+  sanitizeImageModeration('unbuttoned shirt, she stares out') === 'relaxed-fit shirt, she gazes out');
+const swim = applySwimwearWorkaround('She adjusts her red bikini by the pool edge.', 'Natural body pass.');
+check('§3 swimwear workaround: tank base + REQUIRED sd swap',
+  /fitted ribbed tank top and shorts/.test(swim.nbPrompt) && !/bikini/i.test(swim.nbPrompt)
+  && /WARDROBE SWAP/.test(swim.sdPrompt) && /red bikini/.test(swim.sdPrompt) && swim.swapped, swim.sdPrompt);
+check('§3 swimwear untouched without water context',
+  !applySwimwearWorkaround('She models a bikini in the bedroom mirror.', 'x').swapped);
+check('§3 swimwear idempotent', !applySwimwearWorkaround(swim.nbPrompt, swim.sdPrompt).swapped
+  && applySwimwearWorkaround(swim.nbPrompt, swim.sdPrompt).sdPrompt === swim.sdPrompt);
+const swimRoute = buildProductionRoute(0, 'hero_still', 'cdance_2', false, undefined, true);
+check('§3 swim route: seedream swap pass REQUIRED (not conditional)',
+  swimRoute.find((s) => s.tool === 'seedream_4.5')!.conditional === undefined
+  && /REQUIRED wardrobe-swap/.test(swimRoute.find((s) => s.tool === 'seedream_4.5')!.inputAsset));
+check('§3 gpt step carries the strip→retry→route→fallback flow',
+  /retry ONCE clean/.test(heroRoute.find((s) => s.tool === 'gpt_image_2')!.onModerationFlag ?? '')
+  && /nano-banana-2/.test(heroRoute.find((s) => s.tool === 'gpt_image_2')!.onModerationFlag ?? ''));
+check('§2 route names the ref kit + _LOCKED/ path',
+  /REF KIT/.test(heroRoute.find((s) => s.tool === 'gpt_image_2')!.inputAsset)
+  && /_LOCKED\//.test(heroRoute.find((s) => s.tool === 'gpt_image_2')!.inputAsset));
+check('§2 refKit schema accepts a kit', ModelProfileSchema.safeParse({
+  ...BELLE_PROFILE,
+  refs: { strategy: 'single_ref_base64', refKit: { faceCrops: ['a', 'b', 'c', 'd'], bodyCrops: ['e', 'f', 'g'] } },
+}).success);
+
+// ── Part B (Aug 17): SELF-CHALLENGE pass — negation-aware critique that never flags good prompts ──
+const goodSeedance = 'Raw handheld iPhone footage. First she lifts the hay bale, then drops it. Background: birds, a light breeze, phone-mic audio — no smoothness, no stabilization, no music, no on-screen text or subtitles, no watermark, no slow motion.';
+const chGood = challengeMotionPrompt(goodSeedance, 'cdance_2', undefined, false);
+check('challenge: good prompt untouched (negation-aware, zero changes)', chGood.prompt === goodSeedance && chGood.changes.length === 0, chGood.changes.join('; '));
+const chBare = challengeMotionPrompt('She lifts the hay bale and grins.', 'cdance_2', undefined, false);
+check('challenge: bare prompt gets negation pair + subtitle ban + ambient, all logged',
+  /no smoothness/i.test(chBare.prompt) && /subtitle/i.test(chBare.prompt) && /room tone|Ambient/i.test(chBare.prompt) && chBare.changes.length === 3,
+  chBare.changes.join('; '));
+check('challenge idempotent', challengeMotionPrompt(chBare.prompt, 'cdance_2', undefined, false).changes.length === 0);
+const chQuoted = challengeMotionPrompt('She says: "howdy yall" — grinning. Background: birds, phone-mic audio — no smoothness, no stabilization, no on-screen text or subtitles.', 'cdance_2', 'howdy yall', true);
+check('challenge: double-quoted dialogue converted to curly braces', chQuoted.prompt.includes('{howdy yall}') && chQuoted.changes.includes('converted dialogue to curly braces'), chQuoted.prompt);
+const camAcc = new Map<string, number[]>();
+collectRepeatedCameraLines('Static handheld phone propped at chest height across the kitchen counter. She stirs.', 0, camAcc);
+collectRepeatedCameraLines('Static handheld phone propped at chest height across the kitchen counter. She plates it.', 1, camAcc);
+collectRepeatedCameraLines('Filmed by a friend walking backwards down the barn aisle at waist height. She follows.', 2, camAcc);
+const dupes = [...camAcc.values()].filter((v) => v.length >= 2);
+check('challenge: verbatim camera line repeated across beats detected', dupes.length === 1 && dupes[0]!.join(',') === '0,1', JSON.stringify([...camAcc.entries()]));
 
 // ── Content Persona Framework schema (2026-08-17): optional block, backward compatible ──
 // (The SEED_PROFILES loop above already proves persona-less profiles still validate.)

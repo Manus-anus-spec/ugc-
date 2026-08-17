@@ -151,3 +151,31 @@ exaggerated". "full body/frame/length" (framing) is preserved.
 palette rotation + distinct-location spreading across the 3 variants ride the per-variant
 `VARIANT_HINTS` (variants are independent invocations, so diversity is instruction-driven,
 not cross-variant state).
+
+## Aug 17 2026 — ONE-SHOT ENGINE + live-session corrections (supersede §6 where they conflict)
+
+- **ONE-SHOT LAW:** ≤15s in one continuous scene = ONE Seedance take (MAX_SEGMENT_SRC_SEC=15),
+  ALL modes incl. reproduce — source cut cadence is recreated by slicing the take
+  (editPlan slices), never by separate generations. Splits only on a-roll↔b-roll or >15s
+  → fewest/longest BALANCED takes, none under 5s. Dialogue skits across scenes stay multi-take.
+- **"no smoothness, no stabilization" is REINSTATED** in the Seedance lean tail — Khian's
+  Aug 17 live hose/watermelon session proved it load-bearing on 2.0 (drifts gimbal-smooth
+  without it). §6's "1.x workaround" reading is superseded.
+- **Dialogue = CURLY BRACES** `she says casually {line}` (tone outside) — §6's double-quote
+  reading is superseded; braces re-validated live. Mouth-busy beats (eating/drinking) route
+  their line to OFF-CAMERA VO — never lip-sync (the dialogue field is labeled "VO (…)").
+- **Choreography-sheet structure** (one-shot, up to 1200 chars): LOOK declaration first
+  (defend the first frame, don't re-describe the scene) → phases in continuous flow
+  ("First … then … finally …") → ONE camera behavior per phase, camera and action in
+  separate sentences → ambient + phone mic → constraints last (subtitle/watermark ban).
+- **PROP-PHYSICS LAW:** any emitting/pouring prop needs its SOURCE named in the first frame
+  and already-active at clip start (visible nozzle, water running; cut-face, no spawned knife).
+- **SELF-CHALLENGE pass** (rules.ts `challengeMotionPrompt`): deterministic, negation-aware
+  final critique — guarantees negation pair, subtitle ban, ambient, curly braces; logs to
+  `beat.challengeLog`. Cross-beat verbatim camera-line duplicates → one-rewrite loop.
+- **Image side:** GPT-Image-2 one-shot first frame (ref kit: 4 face + 3 headless body crops
+  from the model root `_LOCKED/`, all base64) + §2 body-match LEAD (command the shape;
+  "Curvy but LEAN, NOT thick, NOT a BBL." cap); Seedream = conditional body/wardrobe
+  add-back only. Verbatim anti-slop suffix on every image prompt (`ANTI_SLOP_SUFFIX`).
+  Moderation: strip → retry once → route descriptors to Seedream → NB fallback (route
+  step `onModerationFlag`); swimwear+water → tank base + required Seedream swap.

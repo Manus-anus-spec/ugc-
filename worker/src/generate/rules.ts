@@ -118,7 +118,7 @@ function normalize(s: string): string {
  *  Phrasing follows the proven Seedance 2.0 UGC recipe (official guide + curated prompt repo):
  *  models honor the earliest strong instruction, so this leads every motion prompt. */
 export const DEFAULT_IPHONE_ANCHOR =
-  'Raw handheld iPhone footage, all camera settings automatic, no post-color grading, natural handheld jitter, flat natural lighting, deep focus, imperfect framing — NOT cinematic, no film look, no stabilization';
+  'Raw handheld iPhone footage, all camera settings automatic, no color grading, natural handheld jitter, flat natural daylight, deep focus, imperfect framing — NOT cinematic, no film look, no stabilization';
 
 /** Aesthetic vocabulary a motion prompt must carry so video models don't default to their cinematic house style. */
 const AESTHETIC_TERMS = /(iphone|amateur|vlog|ugc\b|casual .*(footage|video)|home video|phone[- ]camera|webcam|not cinematic|no (film|color|colour) grade|ungraded|raw footage|selfie video|tiktok[- ]style)/i;
@@ -197,9 +197,13 @@ function isNegatedAt(text: string, index: number): boolean {
  *  they legitimately reference features as MATCH-THE-REFERENCE instructions. */
 export function lintNbPrompt(prompt: string, profile: ModelProfile, beatIndex: number): LintViolation[] {
   const v: LintViolation[] = [];
+  // §5: scan only UNPROTECTED sentences — an LLM-echoed near-copy of the closer is a
+  // match-the-reference instruction, not a leak (exact-string exclusion missed echoes).
   const body = prompt
     .replaceAll(profile.identityLock.opener, '')
-    .replaceAll(profile.identityLock.closer, '');
+    .split(/(?<=[.!?])\s+/)
+    .filter((s) => !PROTECTED_LOCK_SENTENCE.test(s))
+    .join(' ');
   for (const pattern of profile.identityLock.strippedDescriptors) {
     if (new RegExp(pattern, 'i').test(body)) {
       v.push({ beatIndex, field: 'nbPrompt', problem: `identity descriptor leaked: /${pattern}/` });
@@ -224,19 +228,34 @@ export function lintNbPrompt(prompt: string, profile: ModelProfile, beatIndex: n
  *  reaching for. These are always wrong for our candid-iPhone aesthetic and have safe
  *  clean replacements, so we FIX them rather than hard-fail the whole run. Identity
  *  descriptors and instruction-type banned phrases are NOT auto-fixed — those still lint. */
+// §1/§5 (Aug 17): every autofix is NEGATION-AWARE — "NOT studio lighting" / "NOT airbrushed" /
+// "NO ring light" are the HOUSE STYLE and were being garbled into "NOT soft natural lighting"
+// and the double-negative "NOT unretouched" by blind replacement. The lookbehinds skip any
+// match preceded by not/no.
+const NEG = String.raw`(?<![Nn][Oo][Tt]\s)(?<![Nn][Oo]\s)`;
+const neg = (pattern: string) => new RegExp(NEG + pattern, 'gi');
 const NB_SLOP_AUTOFIX: [RegExp, string][] = [
-  [/\bstudio lighting\b/gi, 'soft natural lighting'],
-  [/\bring light\b/gi, 'natural window light'],
-  [/\bcinematic\b/gi, 'candid'],
-  [/\bbokeh\b/gi, 'natural depth of field'],
-  [/\bDSLR\b/gi, 'iPhone'],
+  [neg(String.raw`\b[Ss]tudio lighting\b`), 'flat natural light'],
+  [neg(String.raw`\b[Rr]ing light\b`), 'natural window light'],
+  [neg(String.raw`\b[Cc]inematic\b`), 'candid'],
+  [neg(String.raw`\b[Bb]okeh\b`), 'natural depth of field'],
+  [/\bDSLR\b/g, 'iPhone'],
+  // §1 lighting bans — "produced photoshoot" light words; default is flat natural light.
+  [neg(String.raw`\b[Gg]olden[- ]hour( glow| light(ing)?)?\b`), 'flat natural daylight'],
+  [neg(String.raw`\b[Ww]arm glow\b`), 'flat natural light'],
+  [neg(String.raw`\b[Bb]ack[- ]?lit\b|\b[Bb]acklight(ing)?\b`), 'evenly lit'],
+  [neg(String.raw`\b[Rr]im light(ing)?\b`), 'flat natural light'],
+  [neg(String.raw`\b[Ss]oft light(ing)?\b`), 'flat natural light'],
+  // §1 candid-not-posed — the blank model stare reads AI; gaze goes off-lens/mid-action.
+  [neg(String.raw`\b[Ss]tar(?:es?|ing) (?:straight |directly )?(?:into|at) (?:the )?(?:lens|camera)\b`), 'gaze just off-lens, caught mid-action'],
+  [neg(String.raw`\b[Bb]lank (?:model )?stare\b`), 'natural candid expression'],
   // Part F: plastic-perfection tells — Seedream/NB's default "perfect skin" is the
   // single loudest AI giveaway on a first frame. Auto-neutralize the safe ones:
-  [/\bflawless\b/gi, 'natural'],
-  [/\bporeless\b/gi, 'with visible pores'],
-  [/\bsmooth,? (flawless )?skin\b/gi, 'natural skin texture'],
-  [/\bporcelain skin\b/gi, 'natural skin with visible texture'],
-  [/\b(retouched|airbrushed)\b/gi, 'unretouched'],
+  [neg(String.raw`\b[Ff]lawless\b`), 'natural'],
+  [neg(String.raw`\b[Pp]oreless\b`), 'with visible pores'],
+  [neg(String.raw`\b[Ss]mooth,? (?:flawless )?skin\b`), 'natural skin texture'],
+  [neg(String.raw`\b[Pp]orcelain skin\b`), 'natural skin with visible texture'],
+  [neg(String.raw`\b(?:[Rr]etouched|[Aa]irbrushed)\b`), 'unretouched'],
 ];
 
 /** Plastic tells that need judgment (can't be blind-replaced) — lint them instead.
@@ -258,14 +277,27 @@ export function autofixNbSlop(nbPrompt: string): string {
  *  run on a leaked word bricked generate when a profile's persona mentions heritage;
  *  the reference images own the face, so the word is simply removed. lintNbPrompt
  *  stays as the safety net for anything that survives stripping. */
+/** §5 (Aug 17): sentences that ARE the lock or the realism suffix — identity words inside
+ *  them are legitimate match-the-reference instructions, never "leaks". Sentence-level
+ *  (not exact-block) because the LLM echoes NEAR-copies of the closer/suffix on rewrites,
+ *  and byte-exact protection missed them → 'freckle[sd]?' ate "freckles" out of the echo
+ *  ("visible pores and ,"). Shared by stripIdentityDescriptors + lintNbPrompt. */
+const PROTECTED_LOCK_SENTENCE = /(reference (image|photo)s?|do not alter|match the uploaded|face exactly|visible pores|NOT airbrushed|body reference)/i;
+
 export function stripIdentityDescriptors(nbPrompt: string, profile: ModelProfile): string {
-  let p = nbPrompt;
-  for (const pattern of profile.identityLock.strippedDescriptors) {
-    try {
-      p = p.replace(new RegExp(`\\b(${pattern})([- ]?(style|inspired|themed))?\\b`, 'gi'), '');
-    } catch { /* bad regex in profile data — leave for lint */ }
-  }
-  return p.replace(/\s{2,}/g, ' ').replace(/\s+([,.;])/g, '$1').replace(/,\s*,/g, ',').trim();
+  return nbPrompt.split(/(?<=[.!?])\s+/).map((sentence) => {
+    if (PROTECTED_LOCK_SENTENCE.test(sentence)) return sentence;   // lock/suffix sentences are untouchable
+    let s = sentence;
+    for (const pattern of profile.identityLock.strippedDescriptors) {
+      try {
+        // Lookarounds instead of \b: \b treats a hyphen as a boundary, so 'green[- ]?eyes'
+        // ate the tail of "blue-green eyes" and 'nude' the head of "nude-rose" (§5).
+        s = s.replace(new RegExp(`(?<![\\w-])(${pattern})([- ]?(style|inspired|themed))?(?![\\w-])`, 'gi'), '');
+      } catch { /* bad regex in profile data — leave for lint */ }
+    }
+    return s.replace(/\s{2,}/g, ' ').replace(/\s+([,.;])/g, '$1').replace(/,\s*,/g, ',')
+      .replace(/\band([,.;])/g, '$1').trim();
+  }).filter(Boolean).join(' ');
 }
 
 /** Guarantee the identity lock structurally: opener first, closer last (never trust the LLM). */
@@ -274,10 +306,35 @@ export function wrapIdentityLock(nbPrompt: string, profile: ModelProfile): strin
   if (!p.startsWith(profile.identityLock.opener)) p = `${profile.identityLock.opener} ${p}`;
   // Dedup must be sanitization-invariant: after sanitizeImageModeration rewrites the closer's
   // youth wording, a lint-repair re-run would otherwise not recognize the closer and append a
-  // SECOND one. Recognize either the raw or the moderation-safe closer.
+  // SECOND one. §5 belt: match on the closer's stable HEAD (first 40 chars, raw or sanitized) —
+  // survives any later-in-the-sentence mutation, so the closer can never stack (was 3× live).
   const closer = profile.identityLock.closer;
-  if (!p.includes(closer) && !p.includes(sanitizeImageModeration(closer))) p = `${p} ${closer}`;
+  const heads = [closer.slice(0, 40), sanitizeImageModeration(closer).slice(0, 40)].filter(Boolean);
+  if (!heads.some((h) => p.includes(h))) p = `${p} ${closer}`;
   return p;
+}
+
+/** §2 (Aug 17): the per-model BODY-MATCH LEAD — body drifts generic-slim because generation
+ *  ran without the model's body refs. The LEAD rides right after the identity opener and
+ *  binds the frame to the attached ref kit (4 face crops + 3 headless body crops, all
+ *  base64). The face is NEVER described in text (refs are the lock); the body descriptor
+ *  COMMANDS the shape (hedges render lean on GPT-image) and is capped with the LEAN line.
+ *  Idempotent via the 'body reference photos' sentinel. Profiles without `body` are untouched. */
+export const BODY_LEAD_CAP = 'Curvy but LEAN, NOT thick, NOT a BBL.';
+export function buildBodyLead(profile: ModelProfile): string | null {
+  const b = profile.body;
+  if (!b) return null;
+  const descriptor = b.leadDescriptor?.trim() || `${b.build}; ${b.proportions}`;
+  return `Keep her exact face identical to the face references — do not alter her facial features. Her body matches the body reference photos: ${descriptor.replace(/\.$/, '')}. ${BODY_LEAD_CAP}`;
+}
+export function ensureBodyLead(nbPrompt: string, profile: ModelProfile): string {
+  const lead = buildBodyLead(profile);
+  if (!lead || nbPrompt.includes('body reference photos')) return nbPrompt;
+  const opener = profile.identityLock.opener;
+  // After the opener when present (identity first, body second), else prepended.
+  return nbPrompt.startsWith(opener)
+    ? `${opener} ${lead} ${nbPrompt.slice(opener.length).trim()}`
+    : `${lead} ${nbPrompt}`;
 }
 
 /** GPT-image-2 moderation-safe pass (FABLE5 §9 / log item 19). openai/gpt-image-2/edit rejects
@@ -311,16 +368,48 @@ const IMAGE_MODERATION_MAP: [RegExp, string][] = [
   [/\b(seductive|sultry)\b/gi, 'relaxed'],
   [/\bheavy[- ]lidded\b/gi, 'soft, natural'],
   [/\brevealing\b/gi, 'simple'],
+  // §3 (Aug 17) additions from the live trigger dictionary:
+  [/\bunbuttoned\b/gi, 'relaxed-fit'],     // reads as UNDRESSING — top offender
+  [/(?<![\w-])star(es?|ing)(?![\w-])/gi, 'gaz$1'],   // stare→gaze / staring→gazing / stares→gazes
   // Body-shape emphasis (belongs in the SD/Seedream pass, not the GPT-image still).
   [/\bhourglass\b/gi, ''],
   [/\bcurvy\b/gi, 'natural'],
 ];
+// §2: the body-match LEAD is EXEMPT from the body-emphasis strip — its command-style
+// descriptor is the point (§2), and the §3 flag flow handles any moderation pushback
+// (strip → retry → route to Seedream) at execution time, not by pre-neutering the LEAD.
+const BODY_LEAD_SPAN = /Keep her exact face identical to the face references[\s\S]*?NOT a BBL\./;
 export function sanitizeImageModeration(nbPrompt: string): string {
   let p = nbPrompt;
+  const lead = p.match(BODY_LEAD_SPAN)?.[0];
+  if (lead) p = p.replace(lead, '[[BODYLEAD]]');
   for (const [re, rep] of IMAGE_MODERATION_MAP) p = p.replace(re, rep);
-  return p
+  p = p
     .replace(/\b(well-fitted|fitted) fitted\b/gi, 'fitted')   // "tight corset" → collapse double-fitted
     .replace(/\s{2,}/g, ' ').replace(/\s+([,.;])/g, '$1').replace(/,\s*,/g, ',').trim();
+  return lead ? p.replace('[[BODYLEAD]]', lead) : p;
+}
+
+/** §3 (Aug 17) swimwear workaround: swimwear-noun + body emphasis + water TOGETHER is a
+ *  HARD GPT-Image-2 block. Generate the compliant BASE in a tank/regular top, and route
+ *  the swim garment to the Seedream pass as a wardrobe SWAP with face+figure explicitly
+ *  preserved. Idempotent: once swapped, the nbPrompt carries no swim noun and the
+ *  sdPrompt carries the WARDROBE SWAP sentinel. */
+const SWIM_GARMENT = /\b(?:string )?(?:bikini(?: top| bottom)?|swimsuit|swimwear|two[- ]piece swim\w*|monokini|one[- ]piece swimsuit)\b/i;
+const WATER_CONTEXT = /\b(pool|poolside|beach|ocean|sea|lake|river|hot tub|jacuzzi|swim(ming)?|water('s)? edge|waterfall|sprinkler)\b/i;
+const SWIM_STOPWORDS = /^(a|an|the|her|his|their|its|wearing|in|into|on|and|with)$/i;
+export function applySwimwearWorkaround(nbPrompt: string, sdPrompt: string): { nbPrompt: string; sdPrompt: string; swapped: boolean } {
+  const m = nbPrompt.match(SWIM_GARMENT);
+  if (!m || !WATER_CONTEXT.test(nbPrompt)) return { nbPrompt, sdPrompt, swapped: false };
+  // Carry up to 2 preceding descriptor words ("red string bikini") so the swap pass
+  // knows exactly WHICH garment to render — articles/pronouns filtered out.
+  const before = nbPrompt.slice(0, m.index).trimEnd().split(/\s+/).slice(-2)
+    .filter((w) => /^[\w-]+$/.test(w) && !SWIM_STOPWORDS.test(w));
+  const garment = [...before, m[0]].join(' ');
+  const safeNb = nbPrompt.replace(new RegExp(SWIM_GARMENT.source, 'gi'), 'fitted ribbed tank top and shorts');
+  const swap = `WARDROBE SWAP (required pass): change her outfit to the ${garment} exactly, keep her face and figure IDENTICAL to the input image — wardrobe change only.`;
+  const safeSd = sdPrompt.includes('WARDROBE SWAP') ? sdPrompt : `${endDot(sdPrompt)} ${swap}`;
+  return { nbPrompt: safeNb, sdPrompt: safeSd, swapped: true };
 }
 
 /** Sanitize LLM INPUT per profile policy (stored DNA keeps raw observations — plan §5). */
@@ -348,7 +437,9 @@ const UNIVERSAL_SANITIZE: [RegExp, string][] = [
   [/\bbreasts?\b/gi, 'silhouette'],
   [/\bbust contour\b/gi, 'silhouette'],
   [/\bthong\b|\bg[- ]string\b/gi, 'high-cut bottom'],
-  [/\b(nude|naked|topless)\b/gi, 'off-camera'],
+  // §5: lookarounds, not \b — \b treats a hyphen as a boundary, so "nude" was eating the
+  // head of the makeup shade "nude-rose" ("off-camera-rose" garble in live output).
+  [/(?<![\w-])(nude|naked|topless)(?![\w-])/gi, 'off-camera'],
 ];
 
 export function applyUniversalSanitize(text: string): string {
@@ -388,17 +479,30 @@ export const REALISM_TELL_TOKENS: Record<RealismTell, { nb: string; motion: stri
   'rolling-shutter':           { nb: '', motion: 'rolling-shutter wobble on quick pans' },
 };
 
+/** §1 (Aug 17): the VERBATIM anti-slop suffix — every image prompt carries it INTACT.
+ *  stripIdentityDescriptors placeholder-protects it and every autofix is negation-aware,
+ *  so "NOT airbrushed" / "NO ring light" / "freckles" can no longer be garbled out of it. */
+export const ANTI_SLOP_SUFFIX =
+  'Realistic natural skin texture with visible pores and freckles, natural candid phone snapshot, real detailed background in focus, subtle grain, slightly imperfect framing, NOT airbrushed, NOT smoothed, NOT a studio photo, NO ring light.';
+
 /** F: bake the DNA's grade + up to 2 canned realism tells into the NB still —
- *  image-to-video models take their STYLE from the input image (first-frame law). */
+ *  image-to-video models take their STYLE from the input image (first-frame law) —
+ *  then guarantee the verbatim §1 anti-slop suffix. */
 export function ensureNbRealism(nbPrompt: string, dna: FormatDna): string {
-  if (/sensor grain|blown (window )?highlights|imperfect headroom|auto-exposure|fluorescent/i.test(nbPrompt)) return nbPrompt;
-  const tokens = (dna.aesthetic?.realismTells ?? [])
-    .map((t) => REALISM_TELL_TOKENS[t]?.nb)
-    .filter((t): t is string => !!t)
-    .slice(0, 2);
-  if (!tokens.length) tokens.push('faint phone-sensor grain', 'slightly imperfect headroom');
-  const grade = dna.aesthetic?.grade?.trim();
-  return `${endDot(nbPrompt)} Shot look: ${grade ? `${grade}, ` : ''}${tokens.join(', ')}.`;
+  let p = nbPrompt;
+  if (!/sensor grain|blown (window )?highlights|imperfect headroom|auto-exposure|fluorescent/i.test(p)) {
+    const tokens = (dna.aesthetic?.realismTells ?? [])
+      .map((t) => REALISM_TELL_TOKENS[t]?.nb)
+      .filter((t): t is string => !!t)
+      .slice(0, 2);
+    if (!tokens.length) tokens.push('faint phone-sensor grain', 'slightly imperfect headroom');
+    const grade = dna.aesthetic?.grade?.trim();
+    p = `${endDot(p)} Shot look: ${grade ? `${grade}, ` : ''}${tokens.join(', ')}.`;
+  }
+  // Sentinel = a phrase UNIQUE to the suffix ("visible pores and freckles" collided with
+  // profile closers that carry the same wording, silently skipping the suffix — live Aug 17).
+  if (!p.includes('real detailed background in focus')) p = `${endDot(p)} ${ANTI_SLOP_SUFFIX}`;
+  return p;
 }
 
 /** E.1: the ContinuityLock strings ride every nbPrompt — independent generations
@@ -440,7 +544,9 @@ export function ensureBeatCameraPhysics(motionPrompt: string, sourceBeat: Beat |
   return `${endDot(motionPrompt)} CAMERA(source): ${missing.join(', ')}.`;
 }
 
-const SECONDARY_MOTION_TERMS = /(hair (sway|swing|settle|bounc|whip|flip|mov)|fabric|ripple|jiggle|bounc\w+ (chest|body|curves)|soft[- ]body|inertia|earring|necklace|jewel|apron|skirt (sway|mov)|drape)/i;
+// §5: "secondary motion" itself is a sentinel term — a lint-repair rewrite that echoed the
+// header but paraphrased the cues was slipping past this test and stacking a 2nd block.
+const SECONDARY_MOTION_TERMS = /(secondary motion|hair (sway|swing|settle|bounc|whip|flip|mov)|fabric|ripple|jiggle|bounc\w+ (chest|body|curves)|soft[- ]body|inertia|earring|necklace|jewel|apron|skirt (sway|mov)|drape)/i;
 
 /** E.3 (revised — FABLE5 §7): a motionPrompt wants 1–2 NATURAL secondary cues, NOT all four.
  *  Too many (hair + fabric + soft-body + jewelry all at once) make video models animate the
@@ -484,10 +590,11 @@ export function ensureDialogueEmbedded(motionPrompt: string, dialogue: string | 
   const line = dialogue?.trim();
   if (!line) return motionPrompt;
   if (normalize(motionPrompt).includes(normalize(line))) return motionPrompt;
-  // Seedance 2.0 lip-syncs + voices from DOUBLE QUOTES (delivery tone outside) — NOT curly
-  // braces (FABLE5 §6 research). Kling uses a spoken-label quote.
+  // Seedance dialogue: CURLY BRACES with the delivery tone OUTSIDE — `she says casually {line}`
+  // (docs/VIDEO-MODEL-PROMPTING.md; re-validated in the Aug 17 live session + Part-B brief —
+  // supersedes the short-lived double-quote reading). Kling keeps a spoken-label quote.
   const embedded = model === 'cdance_2'
-    ? `She says: "${line}" — casual, natural delivery.`
+    ? `She says, casual natural delivery: {${line}}.`
     : `She says, lips synced: "${line}".`;
   return `${motionPrompt.trim().replace(/[.!?]?$/, '.')} ${embedded}`;
 }
@@ -586,14 +693,79 @@ function stripPhrase(s: string, phrase: string): string {
   return s.replace(re, '').replace(/\s{2,}/g, ' ').trim();
 }
 
-/** FABLE5 §6 Seedance-2.0 LEAN tail. 2.0 wants FEW, intentional clauses — it over-rejects
- *  on long negative stacks and no longer needs the 1.x "no smoothness/no stabilization" trick
- *  (it separates camera vs subject motion natively). So Seedance gets ONE consolidated closing
- *  line: derived ambient + phone-mic audio + a single ≤6-item negative list. Replaces the old
- *  three-sentence cdance tail (negation pair + audio line + subtitle ban). Idempotent. */
+/** FABLE5 §6 Seedance-2.0 LEAN tail: ONE consolidated closing line — derived ambient +
+ *  phone-mic audio + a single ≤6-item negative list (2.0 over-rejects on long stacks).
+ *  Aug 17 (Part B): the "no smoothness, no stabilization" pair is REINSTATED inside the
+ *  list — Khian's live hose/watermelon session proved it load-bearing on 2.0 (without it
+ *  Seedance drifts gimbal-smooth), reversing the earlier "1.x workaround" read. Idempotent. */
 export function applySeedanceLeanTail(motionPrompt: string, dna: FormatDna, lock: ContinuityLock | undefined): string {
   if (/phone-mic audio|no on-screen text/i.test(motionPrompt)) return motionPrompt;
-  return `${endDot(motionPrompt)} Background: ${deriveAmbient(dna, lock)}, phone-mic audio — no music, no on-screen text or subtitles, no watermark, no slow motion.`;
+  return `${endDot(motionPrompt)} Background: ${deriveAmbient(dna, lock)}, phone-mic audio — ${CDANCE_NEGATION_PAIR}, no music, no on-screen text or subtitles, no watermark, no slow motion.`;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Part B (Aug 17): SELF-CHALLENGE PASS — "Niko challenges the prompt in ChatGPT", baked in.
+// After the LLM + injector chain finish a motionPrompt, this deterministic critique checks
+// the house rules one last time, FIXES what is safely mechanical, and logs every change
+// (beat.challengeLog + console). NEGATION-AWARE by construction: every check is a
+// presence/absence or exact-duplicate test, so a good prompt is never flagged. The nuanced
+// failures (cinematizer tells, portrait framing, over-directed expressions) are already
+// lint violations upstream and route through the one-rewrite loop — not duplicated here.
+// ─────────────────────────────────────────────────────────────
+export function challengeMotionPrompt(
+  prompt: string, model: VideoModelChoice, dialogue: string | undefined, spoken: boolean,
+): { prompt: string; changes: string[] } {
+  const changes: string[] = [];
+  let p = prompt;
+  // 1. Seedance load-bearing negation pair (Aug 17 live session: without it 2.0 drifts
+  //    gimbal-smooth). The lean tail carries it; this is the belt if a rewrite dropped it.
+  if (model === 'cdance_2' && !/no smoothness/i.test(p)) {
+    p = `${endDot(p)} ${cap1(CDANCE_NEGATION_PAIR)}.`;
+    changes.push('added Seedance negation pair (no smoothness, no stabilization)');
+  }
+  // 2. Subtitle/watermark ban — 9:16 + speech spawns spontaneous subtitles on every model.
+  if (!/subtitle|no on-screen text/i.test(p)) {
+    p = `${endDot(p)} ${cap1(CDANCE_SUBTITLE_TAIL)}.`;
+    changes.push('added subtitle/watermark ban');
+  }
+  // 3. Ambient/audio presence (the ambient injectors should have handled it — belt).
+  if (!/ambient|room tone|phone-mic|phone mic|background:/i.test(p)) {
+    p = `${endDot(p)} Ambient: quiet natural room tone — phone mic, no background music.`;
+    changes.push('added missing ambient/audio line');
+  }
+  // 4. Seedance dialogue belongs in CURLY BRACES (delivery tone outside) — convert a
+  //    double-quoted verbatim line in place; never touches prompts already in braces.
+  if (model === 'cdance_2' && spoken && dialogue?.trim()) {
+    const line = dialogue.trim();
+    if (!p.includes(`{${line}}`)) {
+      const quoted = new RegExp(`["“”']${line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["“”']`);
+      if (quoted.test(p)) {
+        p = p.replace(quoted, `{${line}}`);
+        changes.push('converted dialogue to curly braces');
+      }
+    }
+  }
+  return { prompt: p, changes };
+}
+
+const CAMERA_SENTENCE = /\b(camera|angle|framing|handheld|static|locked[- ]off|filmed|shot from)\b/i;
+/** Part B challenge (cross-beat): the SAME camera sentence repeated verbatim on multiple
+ *  beats is an AI tell the instruction explicitly bans — catch it on the LLM's RAW motion
+ *  text (before the chain appends intentional house boilerplate) and route it through the
+ *  one-rewrite loop. Exact-duplicate test on >30-char sentences → cannot flag varied
+ *  prompts. Adapt/synthesize only: reproduce is source-pinned and may legitimately repeat. */
+export function collectRepeatedCameraLines(
+  motionPrompt: string, clipIndex: number, acc: Map<string, number[]>,
+): void {
+  for (const raw of motionPrompt.split(/(?<=[.!?])\s+/)) {
+    const s = raw.trim();
+    if (s.length > 30 && CAMERA_SENTENCE.test(s)) {
+      const key = s.toLowerCase().replace(/\s+/g, ' ');
+      const list = acc.get(key) ?? [];
+      if (!list.includes(clipIndex)) list.push(clipIndex);
+      acc.set(key, list);
+    }
+  }
 }
 
 /** E.6 (Kling only): kling_3 weights trailing camera language, so its handheld/anti-cinematic
@@ -631,6 +803,7 @@ export function ensureSkinTexture(sdPrompt: string): string {
 export function buildProductionRoute(
   beatIndex: number, firstFrameSource: string, videoModel: VideoModelChoice, lipSyncNeeded: boolean,
   shotType?: string,
+  swimSwap = false,   // §3: swimwear tank-base workaround → the Seedream swap pass is REQUIRED
 ): ProductionRouteStep[] {
   const steps: ProductionRouteStep[] = [];
   let n = 1;
@@ -648,9 +821,22 @@ export function buildProductionRoute(
       promptField: 'none',
     });
   } else {
-    steps.push({ step: n++, tool: 'nano_banana_2', inputAsset: 'profile face refs' + (firstFrameSource === 'hero_still' ? ' (hero still — locks set/wardrobe/light for ALL beats)' : ''), outputAsset: `beat${beatIndex}-nb-still`, promptField: 'nbPrompt' });
-    steps.push({ step: n++, tool: 'seedream_4.5', inputAsset: `beat${beatIndex}-nb-still + body sheet`, outputAsset: `beat${beatIndex}-sd-frame`, promptField: 'sdPrompt' });
-    steps.push({ step: n++, tool: 'face_restore', inputAsset: `beat${beatIndex}-sd-frame`, outputAsset: `beat${beatIndex}-first-frame (face-matched)`, promptField: 'none' });
+    // Aug 17 one-shot image method: GPT-Image-2 with locked face + headless-body refs in
+    // ONE pass — solves body drift at the source, no automatic Seedream. The Seedream
+    // body pass is CONDITIONAL: it fires only if the operator judges the body did NOT
+    // resolve (tempered rules — stripBodyWordFull etc. — still govern that sdPrompt).
+    steps.push({
+      step: n++, tool: 'gpt_image_2',
+      // §2: the REF KIT rides EVERY call — executors attach all 7 crops as base64.
+      inputAsset: 'REF KIT from the model root _LOCKED/ — 4 face crops + 3 approved headless body crops, ALL attached as base64 (face refs lock the face, body refs are the second target image)' + (firstFrameSource === 'hero_still' ? ' (hero still — locks set/wardrobe/light for ALL beats)' : ''),
+      outputAsset: `beat${beatIndex}-gi-frame`, promptField: 'nbPrompt',
+      // §3: the filter is stochastic — never just fail.
+      onModerationFlag: 'auto-strip known triggers (sanitizeImageModeration dictionary) → retry ONCE clean → route the stripped body/wardrobe descriptors into the Seedream pass → still flagged: fall back to google/nano-banana-2/edit with the SAME refs',
+    });
+    steps.push(swimSwap
+      ? { step: n++, tool: 'seedream_4.5', inputAsset: `beat${beatIndex}-gi-frame + body sheet — REQUIRED wardrobe-swap pass (swimwear tank-base workaround §3): top → swim garment, face+figure preserved`, outputAsset: `beat${beatIndex}-sd-frame`, promptField: 'sdPrompt' }
+      : { step: n++, tool: 'seedream_4.5', inputAsset: `beat${beatIndex}-gi-frame + body sheet — ONLY if the body did not resolve; one gentle pass, tempered body rules`, outputAsset: `beat${beatIndex}-sd-frame`, promptField: 'sdPrompt', conditional: true });
+    steps.push({ step: n++, tool: 'face_restore', inputAsset: `beat${beatIndex}-gi-frame (or beat${beatIndex}-sd-frame if the conditional body pass ran)`, outputAsset: `beat${beatIndex}-first-frame (face-matched)`, promptField: 'none' });
   }
   steps.push({ step: n++, tool: videoModel, inputAsset: `beat${beatIndex}-first-frame`, outputAsset: `beat${beatIndex}-clip`, promptField: 'motionPrompt' });
   if (lipSyncNeeded) {
@@ -706,50 +892,67 @@ export interface GenerationSegment {
   endSec: number;
 }
 
-const SHOT_SIZE_STEP: Record<string, number> = { ECU: 0, CU: 1, MS: 2, WS: 3 };
-export const MAX_SEGMENT_SRC_SEC = 8;     // ≤8s of source per take (Kling ceiling ~10s generated)
+export const MAX_SEGMENT_SRC_SEC = 15;    // Seedance 2.0 one-take generation ceiling (~15s)
+export const MIN_TAKE_SEC = 5;            // Kling/Seedance generation floor — never PLAN a sub-5s take when splitting
 export const MIN_SOLO_BEAT_SEC = 4;       // beats ≥4s stand alone comfortably
 
-/** Deterministic grouper. A new segment starts when the next beat:
- *  - changes cameraAngle (an eye→overhead cut can't live inside one take),
- *  - jumps shot size by >1 step vs the segment's first beat (a 1-step jump is
- *    faked in the edit with a punch-in; ECU→WS cannot be),
- *  - enters on a 'match' cut (different composition by definition), or
- *  - would push the segment past MAX_SEGMENT_SRC_SEC.
- *  Hard/jump cuts between same-scene beats MERGE — the edit slice IS the cut. */
+/** Deterministic grouper — ONE-SHOT BY DEFAULT (Aug 17 rewrite). A same-scene action
+ *  ≤15s is ONE segment = ONE take, REGARDLESS of the source's cut cadence: angle
+ *  changes, shot-size jumps, and match cuts are all reproduced by slicing the single
+ *  take in the edit (editPlan.clips[].slices — the SUB-SECOND CADENCE LAW), while the
+ *  motionPrompt carries the internal choreography in phase-flow. The old version also
+ *  split on angle/size/match and capped takes at 8s → fast-cut sources exploded into
+ *  3s slivers even though Seedance generates 15s in one pass.
+ *  Splits happen ONLY on:
+ *  - a-roll ↔ b-roll (different SUBJECT in frame — physically impossible in one take), or
+ *  - total span >15s → the FEWEST, LONGEST takes possible, balanced so no planned
+ *    take lands under MIN_TAKE_SEC (never a 3s sliver tail). */
 export function planSegments(beats: Beat[], maxSec = MAX_SEGMENT_SRC_SEC): GenerationSegment[] {
-  const segments: GenerationSegment[] = [];
-  let current: number[] = [];
-  let anchor: Beat | null = null;
-
-  const flush = () => {
-    if (!current.length) return;
-    segments.push({
-      beatIndices: [...current],
-      startSec: beats[current[0]!]!.startSec,
-      endSec: beats[current[current.length - 1]!]!.endSec,
-    });
-    current = [];
-    anchor = null;
-  };
-
+  // Pass 1: partition into HARD RUNS — split only where one take is impossible.
+  const runs: number[][] = [];
+  let run: number[] = [];
   for (let i = 0; i < beats.length; i++) {
-    const b = beats[i]!;
-    if (anchor) {
-      const spanIfAdded = b.endSec - beats[current[0]!]!.startSec;
-      const angleBreak = !!b.cameraAngle && !!anchor.cameraAngle && b.cameraAngle !== anchor.cameraAngle;
-      const sizeBreak = !!b.shotSize && !!anchor.shotSize
-        && Math.abs(SHOT_SIZE_STEP[b.shotSize]! - SHOT_SIZE_STEP[anchor.shotSize]!) > 1;
-      const matchBreak = b.cutTransition === 'match';
-      // B-roll ↔ A-roll is ALWAYS a separate generation: different subject in frame
-      // (a hands/food insert can't live inside a take of her face).
-      const shotTypeBreak = (b.shotType ?? 'aroll') !== (anchor.shotType ?? 'aroll');
-      if (angleBreak || sizeBreak || matchBreak || shotTypeBreak || spanIfAdded > maxSec) flush();
+    const prev = run.length ? beats[run[run.length - 1]!]! : null;
+    if (prev && (beats[i]!.shotType ?? 'aroll') !== (prev.shotType ?? 'aroll')) {
+      runs.push(run); run = [];
     }
-    if (!current.length) anchor = b;
-    current.push(i);
+    run.push(i);
   }
-  flush();
+  if (run.length) runs.push(run);
+
+  // Pass 2: chunk each run into the fewest balanced takes that fit maxSec.
+  const segments: GenerationSegment[] = [];
+  for (const r of runs) {
+    const runStart = beats[r[0]!]!.startSec;
+    const runEnd = beats[r[r.length - 1]!]!.endSec;
+    const span = runEnd - runStart;
+    const k = Math.max(1, Math.ceil(span / maxSec));
+    if (k === 1) {
+      segments.push({ beatIndices: [...r], startSec: runStart, endSec: runEnd });
+      continue;
+    }
+    const ideal = span / k;   // balanced targets: 17s → 8.5+8.5, never 15+2
+    let chunk: number[] = [];
+    let chunkStart = runStart;
+    let made = 0;
+    for (let idx = 0; idx < r.length; idx++) {
+      const i = r[idx]!;
+      chunk.push(i);
+      const chunkEnd = beats[i]!.endSec;
+      const remainingBeats = r.length - idx - 1;
+      const remainingChunks = k - made - 1;
+      const nextEnd = remainingBeats > 0 ? beats[r[idx + 1]!]!.endSec : chunkEnd;
+      const wouldOverflow = nextEnd - chunkStart > maxSec;
+      const reachedIdeal = chunkEnd - chunkStart >= ideal - 0.25;
+      if (remainingChunks > 0 && remainingBeats >= remainingChunks && (reachedIdeal || wouldOverflow)) {
+        segments.push({ beatIndices: [...chunk], startSec: chunkStart, endSec: chunkEnd });
+        made++; chunk = []; chunkStart = chunkEnd;
+      }
+    }
+    if (chunk.length) {
+      segments.push({ beatIndices: [...chunk], startSec: chunkStart, endSec: runEnd });
+    }
+  }
   return segments;
 }
 
@@ -872,6 +1075,10 @@ export function stripDialogueFromMotion(motionPrompt: string, dialogue?: string)
 }
 
 export const VO_NO_SPEECH_NOTE = 'She does not speak on camera — relaxed closed-mouth expressions, no talking.';
+
+/** §4/§5 (Aug 17): a beat where her mouth is busy (eating/drinking) can never lip-sync —
+ *  its line is delivered as OFF-CAMERA VOICEOVER instead, whatever the format's audio plan. */
+export const MOUTH_BUSY = /\b(chew(s|ing)?|mouth full|takes? a bite|bit(es?|ing) into|mid[- ]bite|swallow(s|ing)?|gulp(s|ing)?|sip(s|ping)?|slurp(s|ing)?|drinking from)\b/i;
 
 /** Voiceover formats: guarantee prompts are speech-free + carry the no-talking note
  *  (video models add mouth flapping when any speech language survives). */
@@ -1046,6 +1253,12 @@ export function enforceIdeation(
       if (s.shotType) b.shotType = s.shotType;
       if (s.brollSubject && !b.brollSubject) b.brollSubject = s.brollSubject;
     });
+    // ONE-SHOT LAW (Aug 17): the whole source resolved to ONE take → this ideation IS
+    // a one-shot, whatever the LLM said. Unlocks the 1400-char choreography-sheet cap.
+    if (segments!.length === 1 && ideation.videoFormat !== 'ONE_SHOT') {
+      ideation.videoFormat = 'ONE_SHOT';
+      ideation.clipCount = 1;
+    }
   }
 
   // v3.4 dialogue delivery: a voiceover source can never produce on-camera speech —
@@ -1059,9 +1272,22 @@ export function enforceIdeation(
   }
   const spoken = isSpokenOnCamera(ideation.audioPlan.type, dna);
 
+  // ONE-SHOT LAW for adapt/synthesize (reproduce is handled deterministically above):
+  // a ≤15s idea chopped into 3+ clips is source-cadence imitation, not a scene need —
+  // flag it so the one targeted rewrite collapses it to a single choreographed take.
+  // 2 clips stay legal (a genuine hard scene change can justify them).
+  if (!reproduce && ideation.videoFormat === 'MULTI_CLIP'
+      && ideation.targetDurationSec <= MAX_SEGMENT_SRC_SEC && ideation.clipCount >= 3) {
+    violations.push({
+      beatIndex: -1, field: 'videoFormat',
+      problem: `${ideation.targetDurationSec}s idea chopped into ${ideation.clipCount} clips — ONE-SHOT LAW: ≤15s in one scene = videoFormat ONE_SHOT, exactly 1 beat, one phase-flow choreography sheet; cuts are recreated by slicing the take in the edit. Use MULTI_CLIP only for a hard scene change (then fewest/longest takes, none under 5s).`,
+    });
+  }
+
   // A missing continuity lock never kills a run — build a DNA-derived default.
   if (!ideation.continuityLock) ideation.continuityLock = buildDefaultContinuityLock(dna);
 
+  const rawCameraLines = new Map<string, number[]>();   // Part B: cross-beat duplicate check
   ideation.beats.forEach((beat, i) => {
     const sourceBeat = pinned && segSources ? segSources[i] : undefined;
     // Deterministic defaults for anything the LLM omitted — the schema is lenient on
@@ -1081,18 +1307,31 @@ export function enforceIdeation(
     const broll = isBrollBeat(beat.shotType);
     if (broll) beat.firstFrameSource = 'fresh_nb';   // prev frame shows HER — wrong subject for an insert
 
-    // Dialogue delivery (v3.4): embed only on-camera speech; voiceover formats get
-    // speech-free prompts (mouth flapping on a VO video is an instant AI tell).
-    beat.motionPrompt = spoken
+    // Dialogue delivery (v3.4 + §4/§5 Aug 17): embed only on-camera speech; voiceover
+    // formats get speech-free prompts (mouth flapping on a VO video is an instant AI
+    // tell). PER-BEAT exception: a MOUTH-BUSY beat (eating/drinking) can never lip-sync
+    // — its line routes to off-camera VO even in a spoken format. And the beat's
+    // dialogue field is LABELED as VO so the card never carries the "no talking" note
+    // and a lip-sync line side by side (§5 contradiction).
+    const beatSpoken = spoken && !MOUTH_BUSY.test(`${beat.action ?? ''} ${beat.motionPrompt}`);
+    beat.motionPrompt = beatSpoken
       ? ensureDialogueEmbedded(beat.motionPrompt, beat.dialogue, ideation.videoModel.choice)
       : ensureNoOnCameraSpeech(beat.motionPrompt, beat.dialogue);
+    if (!beatSpoken && beat.dialogue?.trim() && !/^VO\b/i.test(beat.dialogue)) {
+      beat.dialogue = `VO (off-camera voiceover — record separately, never lip-sync): ${beat.dialogue}`;
+    }
     // §4.3: on-camera speech carries the profile's spoken-delivery accent (no accent in the
     // motion prompt for VO — the accent guides the separately-recorded VO track instead).
-    if (spoken) beat.motionPrompt = ensureAccentDelivery(beat.motionPrompt, beat.dialogue, profile.voice.accent);
+    if (beatSpoken) beat.motionPrompt = ensureAccentDelivery(beat.motionPrompt, beat.dialogue, profile.voice.accent);
 
     // Lint the LLM's OWN motion text first — the fixed realism blocks are post-append
     // and never compete with its char budget (spec E, cap law).
-    violations.push(...lintMotionPrompt(beat.motionPrompt, profile, ideation.videoFormat, beat.clipIndex, beat.dialogue, fidelityMode, spoken));
+    violations.push(...lintMotionPrompt(beat.motionPrompt, profile, ideation.videoFormat, beat.clipIndex, beat.dialogue, fidelityMode, beatSpoken));
+    // Part B challenge: collect the RAW camera sentences for the cross-beat duplicate
+    // check (before the chain appends intentional house boilerplate).
+    if (!reproduce && ideation.videoFormat === 'MULTI_CLIP') {
+      collectRepeatedCameraLines(beat.motionPrompt, beat.clipIndex, rawCameraLines);
+    }
 
     // NB chain: slop fix + descriptor strip BEFORE lint (deterministic fixes are not
     // violations), then realism bake → continuity lock → identity lock outermost.
@@ -1106,9 +1345,19 @@ export function enforceIdeation(
     beat.nbPrompt = ensureContinuity(beat.nbPrompt, ideation.continuityLock);
     beat.nbPrompt = broll
       ? ensureBrollNb(beat.nbPrompt, beat.brollSubject)
-      : wrapIdentityLock(beat.nbPrompt, profile);
+      : ensureBodyLead(wrapIdentityLock(beat.nbPrompt, profile), profile);   // §2: identity first, body-match LEAD second
+    // §3 swimwear workaround BEFORE moderation-sanitize: tank base in the still, the swim
+    // garment routes to the Seedream pass as a required wardrobe swap.
+    let swimSwap = false;
+    if (!broll) {
+      const swim = applySwimwearWorkaround(beat.nbPrompt, beat.sdPrompt);
+      beat.nbPrompt = swim.nbPrompt;
+      beat.sdPrompt = swim.sdPrompt;
+      swimSwap = swim.swapped || /WARDROBE SWAP/.test(beat.sdPrompt);
+    }
     // GPT-image-2 moderation-safe by default (§9 / log 19) — LAST, so it also sanitizes the
-    // closer's youth wording. Kills the "sensitive content" rejections on clothed adult stills.
+    // closer's youth wording (the §2 body LEAD is span-protected). Kills the "sensitive
+    // content" rejections on clothed adult stills.
     beat.nbPrompt = sanitizeImageModeration(beat.nbPrompt);
 
     // SD chain: body wrap → mandatory skin texture. B-roll has no body — no SD pass.
@@ -1155,6 +1404,14 @@ export function enforceIdeation(
       beat.motionPrompt = ensureMotionCadence(beat.motionPrompt);
       beat.motionPrompt = applyModelPositionBlocks(beat.motionPrompt, ideation.videoModel.choice);
     }
+    // Part B: SELF-CHALLENGE pass — final deterministic critique of the finished prompt.
+    // Fixes the safely-mechanical gaps and logs what it changed (visible on the beat card).
+    const challenged = challengeMotionPrompt(beat.motionPrompt, ideation.videoModel.choice, beat.dialogue, spoken && !broll);
+    beat.motionPrompt = challenged.prompt;
+    if (challenged.changes.length) {
+      beat.challengeLog = challenged.changes;
+      console.log(`challenge beat ${beat.clipIndex}: ${challenged.changes.join('; ')}`);
+    }
     beat.motionPromptCharCount = beat.motionPrompt.length;
 
     if (!beat.sdPrompt.trim()) {
@@ -1163,10 +1420,22 @@ export function enforceIdeation(
     // Production graph is deterministic — always rebuilt, never trusted from the LLM.
     beat.productionRoute = buildProductionRoute(
       i, beat.firstFrameSource, ideation.videoModel.choice,
-      spoken && !!ideation.lipSyncPlan?.needed,   // VO formats never lip-sync generated clips
+      beatSpoken && !!ideation.lipSyncPlan?.needed,   // VO / mouth-busy beats never lip-sync generated clips
       beat.shotType,
+      swimSwap,
     );
   });
+
+  // Part B challenge (cross-beat): identical camera sentences on multiple beats → one
+  // targeted rewrite varies them (the instruction bans verbatim repetition as an AI tell).
+  for (const [line, idxs] of rawCameraLines) {
+    if (idxs.length >= 2) {
+      violations.push({
+        beatIndex: idxs[1]!, field: 'motionPrompt',
+        problem: `camera sentence repeated VERBATIM on beats ${idxs.join(', ')} ("${line.slice(0, 70)}…") — vary the camera language per beat; identical repetition reads AI`,
+      });
+    }
+  }
 
   applyEditPlanFidelity(ideation, dna);
   violations.push(...lintFidelity(ideation, dna, fidelityMode));
