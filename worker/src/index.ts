@@ -17,6 +17,7 @@ import { deleteProfile, getProfile, listProfiles, putProfile } from './routes/pr
 import { getJob } from './routes/jobs';
 import { backfillTaxonomy } from './routes/admin';
 import { synthesisCoverage } from './routes/coverage';
+import { libraryInsights } from './routes/insights';
 import { qaBeat } from './routes/qa';
 
 export default {
@@ -118,6 +119,11 @@ export default {
       // Phase 4 coverage telemetry — pure SQL aggregation, no Gemini cost, safe to poll.
       if (m === 'GET' && seg[0] === 'admin' && seg[1] === 'synthesis-coverage' && seg.length === 2) {
         return await synthesisCoverage(req, env);
+      }
+      // Research: what the analysed library already knows about hook/retention/payoff.
+      // Pure aggregation in SQLite — no Gemini call, no cost.
+      if (m === 'GET' && seg[0] === 'admin' && seg[1] === 'library-insights' && seg.length === 2) {
+        return await libraryInsights(req, env);
       }
       if (m === 'POST' && seg[0] === 'admin' && seg[1] === 'backfill-taxonomy' && seg.length === 2) {
         return await backfillTaxonomy(req, env, ctx);
