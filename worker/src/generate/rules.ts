@@ -94,7 +94,9 @@ export function lintMotionPrompt(
     const m = re.exec(prompt);
     if (m && !isNegatedAt(prompt, m.index)) v.push({ beatIndex, field: 'motionPrompt', problem: mk(m[0]) });
   };
-  flagTell(/\b(waist[- ]up|front angle|subject fills \d{2}%|fills \d{2}%)\b/i,
+  // Shares PORTRAIT_FRAMING_TERM with lintNbPrompt and framingToAntiPortrait so the ban,
+  // the NB check and the emit-time translation can never drift out of agreement.
+  flagTell(PORTRAIT_FRAMING_TERM,
     (w) => `portrait-framing term "${w}" — use environmental anti-portrait framing (subject ~35-45%, room visible, off-center), never "${w}"`);
   // "stare/staring AT" (the bystander freeze tell) — NOT the noun "a heavy-lidded stare" (legit house style). Verb+object only.
   flagTell(/\b(stands? (?:completely )?frozen|holds? still|maintains eye contact|stares? at|staring at)\b/i,
@@ -220,6 +222,20 @@ export function lintNbPrompt(prompt: string, profile: ModelProfile, beatIndex: n
         break;
       }
     }
+  }
+  // Item 6 governs NB stills too ("NB stills: subject ~30-35%, lots of negative space" —
+  // prompt.ts rule 9), but until Phase 2 the portrait-framing check existed ONLY in
+  // lintMotionPrompt. That is why the live artifact's ideations[1].beats[0].nbPrompt says
+  // "camera at chest height, waist-up framing, subject occupies ~40%" and nothing flagged
+  // it — the surface was unlinted, not partially fixed. Scans the same protected-sentence-
+  // stripped `body` as the checks above, so the identity lock's own wording is never flagged,
+  // and is negation-aware so the house "NOT a portrait" style passes.
+  const pm = PORTRAIT_FRAMING_TERM.exec(body);
+  if (pm && !isNegatedAt(body, pm.index)) {
+    v.push({
+      beatIndex, field: 'nbPrompt',
+      problem: `portrait-framing term "${pm[0]}" — use environmental anti-portrait framing (NOT a portrait, subject ~30-35% of frame, off-center, room visible), never "${pm[0]}"`,
+    });
   }
   return v;
 }
@@ -517,6 +533,47 @@ const SHOT_SIZE_TEXT: Record<string, string> = {
   ECU: 'extreme close-up', CU: 'close-up', MS: 'medium shot', WS: 'wide shot',
 };
 
+/** Portrait-framing vocabulary improvement-log item 6 bans. Shared by the emit-time
+ *  translator below and by both linters, so the three can never drift apart. */
+export const PORTRAIT_FRAMING_TERM =
+  /\b(waist[- ]up|front angle)\b|\b(?:subject\s+)?fills\s*~?\d{2}\s*%/i;
+
+/** ITEM 6 vs ITEM 43 — RESOLVED, Phase 2 (2026-08-28). **Item 6 wins at EMIT; item 43
+ *  keeps its DATA.**
+ *
+ *  The conflict: item 43 injects the analyzed source's own framing per beat, and in
+ *  `reproduce` mode that is supposed to be 1:1 — but the source framing vocabulary is
+ *  literally the phrasing item 6 bans, because prompt.ts tells the analyzer to write
+ *  "waist-up, subject fills 60%" (see the `framing` field, shared/schemas.ts). The two
+ *  rules were both live and contradictory: lintMotionPrompt flagged the words, then this
+ *  injector re-added them AFTER the lint had run, so nothing ever caught it. All three
+ *  motionPrompts in the committed live artifact carry
+ *  `CAMERA(source): medium shot, waist-up, subject fills 50%`.
+ *
+ *  The resolution and why: the analyzer's stored vocabulary is left ALONE — 169 formats
+ *  are already stored with it and re-analysing the library to change wording would cost
+ *  real money for zero output gain — but nothing emits those words into a prompt any more.
+ *  This translates on the way out, preserving what actually carries source fidelity (the
+ *  numeric subject size, and the shot size, which rides its own token) while dropping the
+ *  tokens that induce a portrait. Source fidelity is semantically intact; only the
+ *  phrasing changes.
+ *
+ *  Framing with no banned token is returned untouched. */
+export function framingToAntiPortrait(framing: string | undefined): string | undefined {
+  if (!framing?.trim() || !PORTRAIT_FRAMING_TERM.test(framing)) return framing;
+  // Keep the source's own subject size — that is the part with fidelity value. Item 6's
+  // ~40% is only the fallback for a source that named no number.
+  const pct = framing.match(/(?:subject\s+)?fills\s*~?(\d{2})\s*%/i)?.[1];
+  const kept = framing
+    .split(/\s*,\s*/)
+    .filter((part) => part.trim() && !PORTRAIT_FRAMING_TERM.test(part))
+    .join(', ');
+  const anti =
+    `environmental medium-wide (NOT a portrait, NOT close-up), ` +
+    `subject occupies ~${pct ?? '40'}%, off-center, room visible`;
+  return kept ? `${kept}, ${anti}` : anti;
+}
+
 /** E.2 (reproduce): the SOURCE beat's camera language rides its motionPrompt.
  *  Injects only what's missing; idempotent via the CAMERA(source): marker; keeps
  *  the generic CAMERA_PHYSICS_TERMS guard for wholesale absence. */
@@ -531,8 +588,20 @@ export function ensureBeatCameraPhysics(motionPrompt: string, sourceBeat: Beat |
       && !new RegExp(`\\b${sourceBeat.shotSize}\\b`).test(motionPrompt)) {
     missing.push(SHOT_SIZE_TEXT[sourceBeat.shotSize]!);
   }
-  const framingKey = sourceBeat.framing?.toLowerCase().slice(0, 24);
-  if (framingKey && !lower.includes(framingKey)) missing.push(sourceBeat.framing);
+  // Item 6: translate the source framing out of portrait vocabulary before it is emitted
+  // (see framingToAntiPortrait). Presence is probed against BOTH the translated text (so a
+  // second pass sees its own injection) and the ORIGINAL source phrasing — if the LLM already
+  // wrote the framing in the analyzer's own banned wording, the information is present, and
+  // appending the translated clause on top would stack a second, contradictory framing
+  // instruction. Policing that wording is the LINT's job (flagTell → the one-rewrite loop),
+  // which runs on the LLM's raw text before this chain; the injector only fills real gaps.
+  const framing = framingToAntiPortrait(sourceBeat.framing);
+  const framingKey = framing?.toLowerCase().slice(0, 24);
+  const sourceFramingKey = sourceBeat.framing?.toLowerCase().slice(0, 24);
+  const framingPresent =
+    (!!framingKey && lower.includes(framingKey)) ||
+    (!!sourceFramingKey && lower.includes(sourceFramingKey));
+  if (framing && !framingPresent) missing.push(framing);
   const moveKey = sourceBeat.cameraMove?.toLowerCase().slice(0, 24);
   if (moveKey && !lower.includes(moveKey)) missing.push(sourceBeat.cameraMove);
   const dur = Math.round((sourceBeat.endSec - sourceBeat.startSec) * 10) / 10;
@@ -648,6 +717,28 @@ export function ensureAmbientSound(motionPrompt: string, dna: FormatDna, lock: C
   return `${endDot(motionPrompt)} Ambient: ${deriveAmbient(dna, lock)} — phone mic, no background music.`;
 }
 
+/** Improvement-log item 23 — "the single biggest video fix". Video models silently slim and
+ *  reshape her between the first frame and the last, which destroys the body lock the NB/SD
+ *  passes worked to establish. Item 23 requires this directive on EVERY motionPrompt.
+ *
+ *  Phase 2 (2026-08-28): it had never been built. Not a silent no-op — a repo-wide search for
+ *  "do NOT slim" / "Maintain her exact body" / "distort her figure" returned nothing, and all
+ *  three motionPrompts in the committed live artifact lack it.
+ *
+ *  Post-append, like the other fixed realism blocks, so it never competes with the LLM's char
+ *  budget (spec E, cap law). Idempotent via a term sentinel rather than an exact-string match,
+ *  because a lint-repair rewrite can paraphrase the sentence while keeping its meaning — the
+ *  same failure mode that made the Secondary-motion sentinel term-based (§5). */
+export const BODY_HOLD_DIRECTIVE =
+  'Maintain her exact body shape and proportions from the first frame throughout — do NOT slim, shrink, or distort her figure.';
+const BODY_HOLD_TERMS =
+  /(maintain her exact body|body shape and proportions|do\s*n[o']?t slim|distort her figure|slim, shrink)/i;
+
+export function ensureBodyHold(motionPrompt: string): string {
+  if (BODY_HOLD_TERMS.test(motionPrompt)) return motionPrompt;
+  return `${endDot(motionPrompt)} ${BODY_HOLD_DIRECTIVE}`;
+}
+
 /** §2A static-camera default (Khian's #1). Amateur phone footage is LOCKED-OFF by default —
  *  no pans/tilts/zooms/push-ins unless the SOURCE genuinely had a move (which the source-camera
  *  injectors carry in already). If the prompt has no camera-move verb AND no static/handheld
@@ -662,13 +753,49 @@ export function ensureStaticCameraDefault(motionPrompt: string): string {
   return `${endDot(motionPrompt)} ${STATIC_CAMERA_DEFAULT}.`;
 }
 
+/** Body nouns "full" is not allowed to amplify. `glutes` was missing until Phase 2 —
+ *  the live profile's FULL_SIDE template says "full glutes/hips" and sailed straight
+ *  through. */
+const SD_BODY_NOUN =
+  'bust|busts|hips?|thighs?|chest|breasts?|figure|curves?|proportions|glutes|butt|booty|rear|cleavage|decolletage|upper[- ]body|lower[- ]body|midsection';
+
+/** One intervening modifier word. Function words are excluded by lookahead so an
+ *  idiomatic "full of natural curves" is never mangled into "of natural curves". */
+const SD_BODY_MODIFIER =
+  "(?!of\\b|and\\b|or\\b|in\\b|on\\b|at\\b|the\\b|a\\b|an\\b|with\\b|for\\b|to\\b|but\\b|her\\b|his\\b)[a-z]+[-\\s]";
+
+const SD_FULL_BODY_WORD = new RegExp(
+  `\\bfull(?:er)?\\s+((?:${SD_BODY_MODIFIER}){0,2}?)(${SD_BODY_NOUN})\\b`,
+  'gi',
+);
+
 /** §3 body-word "full" — over-amplifies Seedream ("full bust/hips/thighs" dramatizes the body).
  *  Strip it from the SD pass wherever it modifies the body; NEVER touch "full body/frame/length"
- *  (those are framing terms). Belt-and-braces: the seed templates are already scrubbed. */
+ *  (those are framing terms).
+ *
+ *  Phase 2 (2026-08-28) — improvement-log item 1, the oldest item in the log, was still
+ *  being violated on every live run. The old pattern required "full" to sit IMMEDIATELY
+ *  before the body noun, so every real-world phrasing escaped: the committed live artifact
+ *  emitted "Full natural bust", "full high bust", "full round lifted glutes", "full
+ *  proportioned thighs" and "full glutes/hips" across all three ideations. Case was never
+ *  the problem (the pattern was already /gi) — adjacency was. Now up to two adjectives may
+ *  sit between the two, and when the phrase already carries an adjective we simply DROP
+ *  "full" instead of substituting, so "full natural bust" becomes "natural bust" rather
+ *  than "natural natural bust".
+ *
+ *  NOTE the seed templates are NOT "already scrubbed" as the old comment claimed — the live
+ *  D1 profile carries "full" in five of rosalia's toolRules.sd.frameTypeTemplates, which is
+ *  where the artifact's leaks came from verbatim. This strip is the emit-time backstop; the
+ *  data itself still wants a 🔑 fix. */
 export function stripBodyWordFull(sdPrompt: string): string {
   return sdPrompt
     .replace(/\bnaturally full\b/gi, 'naturally curvy')
-    .replace(/\bfull(?:er)?\s+(bust|busts|hips?|thighs?|chest|breasts?|figure|curves?|proportions|upper[- ]body|lower[- ]body|midsection)\b/gi, 'natural $1')
+    .replace(SD_FULL_BODY_WORD, (match: string, mods: string, noun: string) => {
+      const replaced = mods.trim() ? `${mods}${noun}` : `natural ${noun}`;
+      // "Full natural bust + …" opens a sentence the operator copy-pastes verbatim —
+      // keep the capital rather than handing them a lowercase opener.
+      return /^F/.test(match) ? cap1(replaced) : replaced;
+    })
     .replace(/\s{2,}/g, ' ')
     .trim();
 }
@@ -1397,6 +1524,17 @@ export function enforceIdeation(
       : isSeedance
         ? ensureMicroExpression(beat.motionPrompt, sourceBeat?.framing ?? beat.camera, beat.microExpression)
         : ensureIdleBehavior(ensureMicroExpression(beat.motionPrompt, sourceBeat?.framing ?? beat.camera, beat.microExpression));
+    // Item 23 hold-body directive. Applies to BOTH models and skips b-roll only (an insert
+    // with no person in frame has no body to hold). It goes in BEFORE the model-specific
+    // tails: kling_3 weights trailing camera language, so applyModelPositionBlocks must keep
+    // the last word (E.6) — hence "present exactly once", not "ends with".
+    //
+    // Judgement call worth flagging: Seedance 2.0 runs in LEAN mode because it over-rejects
+    // on stacked clauses, so adding a sentence there cuts against §6. It is added anyway —
+    // item 23 is unconditional and calls this the single biggest video fix, and the lean-mode
+    // finding is about long stacked NEGATIVE lists, not one positive body constraint. Revisit
+    // if 2.0 rejection rates move.
+    if (!broll) beat.motionPrompt = ensureBodyHold(beat.motionPrompt);
     if (isSeedance) {
       beat.motionPrompt = applySeedanceLeanTail(beat.motionPrompt, dna, ideation.continuityLock);
     } else {
