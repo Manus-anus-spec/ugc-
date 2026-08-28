@@ -15,5 +15,7 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["src", "shared", "scripts"]
+  // "worker/src/cf.d.ts" carries the ambient D1 globals; tests/ imports worker code
+  // (db.ts, gemini.ts) directly, so the root project needs those declarations too.
+  "include": ["src", "shared", "scripts", "tests", "worker/src/cf.d.ts"]
 }
