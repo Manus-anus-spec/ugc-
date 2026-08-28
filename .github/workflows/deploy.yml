@@ -1,0 +1,96 @@
+name: Deploy frontend to gh-pages
+
+# MANUAL ONLY, by deliberate decision (Phase 1, 2026-08-28).
+#
+# GitHub Pages serves the `gh-pages` branch root for the SPA. Deploys have always
+# been hand-run (START-HERE.md "Frontend"), and this workflow does not change that:
+# it is `workflow_dispatch` only, so nothing reaches the live site without someone
+# pressing the button. Two reasons to keep it manual for now:
+#   1. Auto-deploying the live site on every merge to `main` is a real behavioural
+#      change from the current hand-built process, and that is the operator's call.
+#   2. The plan is to move the frontend to Cloudflare (brief §P2), which would
+#      retire this workflow — so auto-deploy would be short-lived anyway.
+#
+# To switch to auto-deploy on merge, add:
+#   push:
+#     branches: [main]
+# to the `on:` block below. Nothing else needs to change.
+on:
+  workflow_dispatch:
+
+# Needs write access to push the built bundle to the `gh-pages` branch. Scoped to
+# this workflow only; ci.yml stays read-only.
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy-gh-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: build + publish gh-pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Full history: the job commits onto an existing branch, and a shallow clone
+      # cannot push a non-fast-forward-safe commit onto it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install worker dependencies
+        run: npm ci
+        working-directory: worker
+
+      # The gate: a red suite can never reach the live site. This is the whole
+      # point of putting the deploy behind CI rather than leaving it hand-run.
+      - name: npm test
+        run: npm test
+
+      # `base: '/ugc-/'` is already set in vite.config.ts for the Pages subpath.
+      - name: Build
+        run: npm run build
+
+      - name: Publish dist/ to gh-pages
+        # Replicates the documented manual procedure (START-HERE.md): check out
+        # gh-pages into a worktree, clear its root, copy dist/. in, commit, push.
+        # Deliberately uses plain git + the built-in GITHUB_TOKEN rather than a
+        # marketplace action — this is a PUBLIC repo and a third-party action on
+        # the deploy path is an avoidable supply-chain surface.
+        run: |
+          set -euo pipefail
+          test -f dist/index.html || { echo "dist/index.html missing — build produced nothing"; exit 1; }
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Track gh-pages locally whether or not the fetch already created it.
+          git fetch origin gh-pages
+          git worktree add /tmp/ghp origin/gh-pages
+
+          # `git rm -rq .` clears tracked files without touching .git; the copy
+          # then lays the fresh bundle down at the branch root.
+          cd /tmp/ghp
+          git rm -rq . || true
+          cp -R "$GITHUB_WORKSPACE/dist/." .
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No change in built output — nothing to deploy."
+          else
+            git commit -m "Deploy ${GITHUB_SHA::7} (via ${GITHUB_WORKFLOW})"
+            git push origin HEAD:gh-pages
+            echo "Deployed. Confirm the new assets/index-*.js hash is served."
+          fi
+
+      - name: Report the deployed bundle hash
+        run: ls -1 dist/assets/ | grep -E '^index-.*\.js$' || true

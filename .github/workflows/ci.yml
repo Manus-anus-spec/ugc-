@@ -1,0 +1,53 @@
+name: CI
+
+# Runs the full local verification chain on every push and PR. Before this workflow
+# existed there was no CI at all, which is how a failing `scripts/schema-smoke.ts`
+# (a fixture that predated the v3 filming-fidelity schema) sat on `main` unnoticed.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# Read-only: this workflow never writes to the repo. The deploy job lives in
+# deploy.yml and asks for `contents: write` there, not here.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: typecheck + unit + rules + smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node 22 LTS, deliberately NOT the maintainer's local v25 — v25 is not an
+      # LTS line and CI should be green on a runtime we would actually ship on.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # `npm ci` (not `npm install`) so the lockfile is authoritative and a drifted
+      # transitive dep fails loudly here instead of silently changing behaviour.
+      - name: Install dependencies
+        run: npm ci
+
+      # The worker has its own tsconfig and its own dependency tree; `npm run
+      # typecheck` compiles both projects, so worker deps must be present too.
+      - name: Install worker dependencies
+        run: npm ci
+        working-directory: worker
+
+      # typecheck (root + worker) → 79 unit tests → 13 compiler tests → schema smoke.
+      - name: npm test
+        run: npm test
+
+      # A green test suite that cannot be bundled is still a broken main.
+      - name: Production build
+        run: npm run build
