@@ -57,7 +57,12 @@ export async function rescoreVirality(req: Request, env: Env, ctx: ExecutionCont
         AND (?1 = 1
              OR json_extract(dna, '$.virality.rubricVersion') IS NULL
              OR json_extract(dna, '$.virality.rubricVersion') != ?2)
-      ORDER BY virality_score ASC
+      -- ORDER BY updated_at, NOT by score. Rescoring sets updated_at = now, so a finished
+      -- row moves to the BACK of the queue and a batched backfill sweeps every row exactly
+      -- once. Ordering by score looks friendlier (worst first) but breaks under force=1:
+      -- the remaining count never decreases, the lowest-scored rows are re-selected on every
+      -- batch, and the loop pays Gemini repeatedly for the same formats.
+      ORDER BY updated_at ASC
       LIMIT ?3`,
   ).bind(force ? 1 : 0, RUBRIC_VERSION, limit).all<Row>();
 
