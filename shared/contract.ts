@@ -44,6 +44,8 @@ import {
   FrameSpecSchema,
   GenerationRunSchema,
   GenerationStatusSchema,
+  GenerationVerdictSchema,
+  GenerationVerdictPatchSchema,
   HookSchema,
   IdeationSchema,
   JobSchema,
@@ -64,6 +66,8 @@ export type VideoModelChoice = z.infer<typeof VideoModelChoiceSchema>;
 export type VideoFormat = z.infer<typeof VideoFormatSchema>;
 export type VariationStrength = z.infer<typeof VariationStrengthSchema>;
 export type GenerationStatus = z.infer<typeof GenerationStatusSchema>;
+export type GenerationVerdict = z.infer<typeof GenerationVerdictSchema>;
+export type GenerationVerdictPatch = z.infer<typeof GenerationVerdictPatchSchema>;
 export type SdFrameType = z.infer<typeof SdFrameTypeSchema>;
 export type CameraSetupKind = z.infer<typeof CameraSetupKindSchema>;
 

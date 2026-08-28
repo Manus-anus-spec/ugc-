@@ -8,7 +8,7 @@ import { GeminiQuotaError } from './gemini';
 import { authenticate } from './auth';
 import { err, handleOptions, json } from './http';
 import { analyze } from './routes/analyze';
-import { generate, generateVariant, getGeneration, listGenerations } from './routes/generate';
+import { generate, generateVariant, getGeneration, listGenerations, patchGeneration } from './routes/generate';
 import {
   createFormat, deleteFormat, getFormat, getVersion, listFormats, listVersions, reindexFts, updateFormat,
 } from './routes/formats';
@@ -49,6 +49,10 @@ export default {
       }
       if (m === 'GET' && seg[0] === 'generations' && seg[1] && seg.length === 2) {
         return await getGeneration(req, env, seg[1]);
+      }
+      // Feedback loop (Phase 3): the operator's verdict on a finished run.
+      if (m === 'PATCH' && seg[0] === 'generations' && seg[1] && seg.length === 2) {
+        return await patchGeneration(req, env, seg[1]);
       }
 
       // ── formats ──

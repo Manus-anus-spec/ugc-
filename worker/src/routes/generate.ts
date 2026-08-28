@@ -14,7 +14,8 @@
 import { z } from 'zod';
 import {
   BeatGenerationSchema, CameraAngleSchema, ContinuityLockSchema, CutTransitionSchema,
-  EditPlanSchema, FidelityModeSchema, FirstFrameSourceSchema, GenerationRunSchema, IdeationSchema,
+  EditPlanSchema, FidelityModeSchema, FirstFrameSourceSchema, GenerationRunSchema,
+  GenerationVerdictPatchSchema, IdeationSchema,
   LipSyncPlanSchema, ModelProfileSchema, SecondaryMotionSchema, ShotSizeSchema,
   VariationStrengthSchema, ViralityForecastSchema,
 } from '../../../shared/schemas';
@@ -241,6 +242,34 @@ async function selectSurpriseFormatIds(
   for (const r of recent.results) {
     try { for (const id of JSON.parse(r.ids ?? '[]') as string[]) exclude.add(id); } catch { /* tolerate old rows */ }
   }
+  // Fusion-quality prior (Phase 3): per-format up/down counts from judged runs.
+  // A format earns credit two ways, because a run reaches it two ways: as one of the
+  // fused sources of a synthesize run (sourceFormatIds), or as the single subject of a
+  // reproduce/adapt run (format_id). Counting only the first would leave every
+  // non-synthesis thumb on the floor. 'shipped' counts as a strong up — the operator
+  // actually published it, which is the best signal available.
+  const verdicts = await env.DB.prepare(
+    `WITH judged AS (
+       SELECT g.verdict AS verdict, j.value AS format_id
+         FROM generations g, json_each(json_extract(g.output, '$.sourceFormatIds')) j
+        WHERE g.verdict IS NOT NULL
+       UNION ALL
+       SELECT g.verdict AS verdict, g.format_id AS format_id
+         FROM generations g
+        WHERE g.verdict IS NOT NULL
+          AND json_extract(g.output, '$.sourceFormatIds') IS NULL
+     )
+     SELECT format_id,
+            SUM(CASE WHEN verdict IN ('up', 'shipped') THEN 1 ELSE 0 END) AS ups,
+            SUM(CASE WHEN verdict = 'down' THEN 1 ELSE 0 END) AS downs
+       FROM judged GROUP BY format_id`,
+  ).all<{ format_id: string; ups: number; downs: number }>();
+  const feedback = new Map(verdicts.results.map((r) => [r.format_id, { ups: r.ups, downs: r.downs }]));
+  if (feedback.size > 0) {
+    const shaped = [...feedback.entries()].map(([id, f]) => `${id.slice(0, 8)}:+${f.ups}/-${f.downs}`);
+    console.log(`surprise ${profileId}: fitness prior active on ${feedback.size} format(s) — ${shaped.join(' ')}`);
+  }
+
   const menu = formatMenu && formatMenu.length > 0 ? new Set(formatMenu) : undefined;
   if (menu) {
     // Persona lane bias — log the split, never silently drop (types stay drawable at ×0.15).
@@ -248,7 +277,10 @@ async function selectSurpriseFormatIds(
     console.log(`surprise ${profileId}: persona lane bias — up-weighted [${types.filter((t) => menu.has(t)).join(', ')}], down-weighted ×0.15 [${types.filter((t) => !menu.has(t)).join(', ')}]`);
   }
   const ids = sampleSurpriseSources(
-    results.map((r) => ({ id: r.id, formatType: r.format_type, score: r.virality_score })), n, exclude,
+    results.map((r) => ({
+      id: r.id, formatType: r.format_type, score: r.virality_score,
+      ...feedback.get(r.id),   // absent = never judged = neutral fitness 0.5
+    })), n, exclude,
     Math.random, menu,
   );
   console.log(`surprise ${profileId}: drew [${ids.join(', ')}]`);
@@ -539,10 +571,62 @@ export async function listGenerations(req: Request, env: Env, formatId: string):
   }, 200, req, env);
 }
 
+/** Verdict columns (0004) live outside the output blob, so every read merges them on.
+ *  Undefined rather than null for absent values — the schema marks them optional. */
+type VerdictRow = { verdict: string | null; verdict_note: string | null; verdict_at: string | null; verdict_ideation: number | null };
+
+function withVerdict(output: string, row: VerdictRow): Record<string, unknown> {
+  const run = JSON.parse(output) as Record<string, unknown>;
+  if (row.verdict) run.verdict = row.verdict;
+  if (row.verdict_note) run.verdictNote = row.verdict_note;
+  if (row.verdict_at) run.verdictAt = row.verdict_at;
+  if (row.verdict_ideation !== null) run.verdictIdeation = row.verdict_ideation;
+  return run;
+}
+
 export async function getGeneration(req: Request, env: Env, id: string): Promise<Response> {
-  const row = await env.DB.prepare('SELECT output FROM generations WHERE id = ?').bind(id).first<{ output: string }>();
+  const row = await env.DB.prepare(
+    'SELECT output, verdict, verdict_note, verdict_at, verdict_ideation FROM generations WHERE id = ?',
+  ).bind(id).first<{ output: string } & VerdictRow>();
   if (!row) return err('not_found', `generation ${id} not found`, 404, req, env);
-  return json(JSON.parse(row.output), 200, req, env);
+  return json(withVerdict(row.output, row), 200, req, env);
+}
+
+/** PATCH /generations/:id — the feedback loop's write side (Phase 3, brief §P1.1).
+ *
+ *  Before this route existed the app could not learn: all 138 live runs sat at
+ *  status='draft' and NO feedback signal had ever been recorded, so the sampler had
+ *  nothing to weight by. The verdict feeds fitness() in the surprise sampler, which
+ *  soft-weights the formats behind a fused run.
+ *
+ *  Idempotent by design: re-thumbing a run OVERWRITES its verdict rather than appending,
+ *  so the operator can change their mind and a double-click cannot inflate the counts.
+ *  `status` is deliberately not touched. */
+export async function patchGeneration(req: Request, env: Env, id: string): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return err('invalid_body', 'body must be JSON', 400, req, env);
+  }
+  const parsed = GenerationVerdictPatchSchema.safeParse(body);
+  if (!parsed.success) {
+    return err('invalid_body', `verdict patch invalid:\n${zodText(parsed.error)}`, 400, req, env);
+  }
+  const { verdict, ideationIndex, note } = parsed.data;
+  const now = new Date().toISOString();
+  // UPDATE … WHERE id = ? reports whether the row existed, so no separate existence read.
+  const res = await env.DB.prepare(
+    `UPDATE generations SET verdict = ?, verdict_note = ?, verdict_at = ?, verdict_ideation = ?
+     WHERE id = ?`,
+  ).bind(verdict, note ?? null, now, ideationIndex ?? null, id).run();
+  if (!res.meta.changes) return err('not_found', `generation ${id} not found`, 404, req, env);
+
+  console.log(`verdict ${id}: ${verdict}${ideationIndex !== undefined ? ` (ideation ${ideationIndex})` : ''}`);
+  const row = await env.DB.prepare(
+    'SELECT output, verdict, verdict_note, verdict_at, verdict_ideation FROM generations WHERE id = ?',
+  ).bind(id).first<{ output: string } & VerdictRow>();
+  return json(withVerdict(row!.output, row!), 200, req, env);
 }
 
 function tryParse(text: string): unknown {

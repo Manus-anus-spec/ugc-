@@ -1,5 +1,6 @@
 import type {
-  AnalyzeResponse, FormatDna, FormatSummary, GenerationRun, Job, ModelProfile, VariationStrength,
+  AnalyzeResponse, FormatDna, FormatSummary, GenerationRun, GenerationVerdict, Job, ModelProfile,
+  VariationStrength,
 } from '@shared/contract';
 import { ANALYZE_FIELDS } from '@shared/fields';
 import { apiFetch } from './client';
@@ -96,6 +97,15 @@ export function listGenerations(formatId: string): Promise<{
 
 export function getGeneration(id: string): Promise<GenerationRun> {
   return apiFetch(`/generations/${id}`);
+}
+
+/** The feedback loop's write side (Phase 3). Sending the same verdict again overwrites
+ *  rather than accumulating, so the operator can change their mind freely. The verdict
+ *  soft-weights the formats behind this run in the next surprise-me draw. */
+export function setGenerationVerdict(
+  id: string, verdict: GenerationVerdict, opts: { ideationIndex?: number; note?: string } = {},
+): Promise<GenerationRun> {
+  return apiFetch(`/generations/${id}`, { method: 'PATCH', json: { verdict, ...opts } });
 }
 
 export function getJob(id: string): Promise<Job> {

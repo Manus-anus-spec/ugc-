@@ -15,7 +15,37 @@
  *    downstream and must not always be the highest-scoring pick
  */
 
-export type SurpriseCandidate = { id: string; formatType: string | null; score: number };
+export type SurpriseCandidate = {
+  id: string;
+  formatType: string | null;
+  score: number;
+  /** Operator feedback counts for this format (Phase 3). Absent = never judged. */
+  ups?: number;
+  downs?: number;
+};
+
+/** Laplace/Beta-smoothed success rate — the fusion-quality prior (Phase 3, brief §P1.1).
+ *
+ *  fitness(F) = (ups + β) / (ups + downs + 2β), β ≈ 2
+ *
+ *  β is a pseudo-count of 2 imaginary ups and 2 imaginary downs, which does the work here:
+ *  an unjudged format sits at exactly 0.5 (neutral, so the 82% of the library that has
+ *  never been used is not punished for it), and a single thumbs-down cannot crater a
+ *  format on one data point — 0/1 gives 0.4, not 0. It takes sustained rejection to fall
+ *  far, which is the correct behaviour when n is tiny.
+ *
+ *  SOFT WEIGHTING ONLY. The result is bounded strictly above 0 (a format with 0 ups and
+ *  1000 downs still returns 2/1004), so fitness can never hard-exclude a format from the
+ *  draw — consistent with the existing off-menu ×0.08 approach. A format the operator
+ *  hates fades; it never disappears, because the library is the asset.
+ */
+export const FITNESS_BETA = 2;
+
+export function fitness(ups = 0, downs = 0, beta: number = FITNESS_BETA): number {
+  const u = Math.max(0, ups);
+  const d = Math.max(0, downs);
+  return (u + beta) / (u + d + 2 * beta);
+}
 
 /** Persona lane bias (Content Persona Framework, 2026-08-17): when the profile has a
  *  contentPersona.formatMenu, off-menu archetypes are down-weighted ×0.15 — they can
@@ -37,7 +67,12 @@ export function sampleSurpriseSources(
 
   const laneBias = (c: SurpriseCandidate) =>
     menu && menu.size > 0 ? (menu.has(c.formatType ?? '?') ? 1 : OFF_MENU_WEIGHT) : 1;
-  const weight = (c: SurpriseCandidate) => Math.max(1, c.score) ** 2 * laneBias(c);
+  // score² × fitness × laneBias (Phase 3). Quality still leads the draw; the feedback
+  // prior nudges it. An unjudged format scores fitness 0.5, so introducing the prior
+  // rescales every weight uniformly and — on its own — changes NO relative probability;
+  // only actual thumbs move a format relative to its peers.
+  const weight = (c: SurpriseCandidate) =>
+    Math.max(1, c.score) ** 2 * fitness(c.ups, c.downs) * laneBias(c);
   const picked: SurpriseCandidate[] = [];
   const seenType = new Set<string>();
   while (picked.length < n && pool.length > 0) {

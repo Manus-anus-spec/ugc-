@@ -5,9 +5,14 @@
  * world, her body (Seedream pass), her voice.
  */
 import { useEffect, useState } from 'react';
-import { Loader2, RotateCcw, Sparkles, User, XCircle } from 'lucide-react';
-import type { FormatSummary, GenerationRun, Ideation, VariationStrength } from '@shared/contract';
-import { generateIdeations, synthesizeIdeations, getGeneration, listFormats, listGenerations, listProfiles } from '../../api';
+import { Loader2, RotateCcw, Send, Sparkles, ThumbsDown, ThumbsUp, User, XCircle } from 'lucide-react';
+import type {
+  FormatSummary, GenerationRun, GenerationVerdict, Ideation, VariationStrength,
+} from '@shared/contract';
+import {
+  generateIdeations, synthesizeIdeations, getGeneration, listFormats, listGenerations, listProfiles,
+  setGenerationVerdict,
+} from '../../api';
 import { ApiRequestError } from '../../api/client';
 import { ArchetypeChip, CopyButton, KV, ScoreRing, Section, ViralityBadge, scoreTier } from '../ui';
 import { BeatPromptCard } from './BeatPromptCard';
@@ -17,6 +22,84 @@ const STRENGTHS: { id: VariationStrength; label: string; hint: string }[] = [
   { id: 'medium', label: 'medium', hint: 'new scenario, same skeleton' },
   { id: 'bold', label: 'bold', hint: 'keep only the mechanism' },
 ];
+
+/** Phase 3 — the feedback loop's UI. Before this, no verdict had ever been recorded on
+ *  any of the 138 live runs, so the sampler had nothing to learn from.
+ *
+ *  The verdict is per RUN (with the judged ideation recorded alongside), because that is
+ *  the unit whose source formats get re-weighted. Optimistic: the thumb lights up
+ *  immediately and rolls back if the request fails — a slow API must not make the
+ *  operator think the click was lost, which is how feedback UIs end up unused. */
+function VerdictBar({ runId, ideationIndex, current, onChange }: {
+  runId: string;
+  ideationIndex: number;
+  current: GenerationVerdict | undefined;
+  onChange: (v: GenerationVerdict | undefined) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+  const [failed, setFailed] = useState<string | null>(null);
+
+  const send = async (verdict: GenerationVerdict) => {
+    const previous = current;
+    setBusy(true); setFailed(null);
+    onChange(verdict);                       // optimistic
+    try {
+      await setGenerationVerdict(runId, verdict, {
+        ideationIndex,
+        ...(note.trim() ? { note: note.trim() } : {}),
+      });
+    } catch (e) {
+      onChange(previous);                    // roll back — never show a verdict that did not persist
+      setFailed(e instanceof ApiRequestError ? `${e.api.code}: ${e.api.error}` : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const OPTIONS: { v: GenerationVerdict; icon: typeof ThumbsUp; label: string; hint: string }[] = [
+    { v: 'up', icon: ThumbsUp, label: 'good', hint: 'worth producing — raises these sources in the next draw' },
+    { v: 'down', icon: ThumbsDown, label: 'weak', hint: 'not worth producing — lowers these sources (never excludes them)' },
+    { v: 'shipped', icon: Send, label: 'shipped', hint: 'actually published — the strongest positive signal' },
+  ];
+
+  return (
+    <div className="rounded border border-hairline bg-raised p-3 space-y-2">
+      <p className="font-mono text-[10px] uppercase tracking-wider text-dim">
+        was this any good? — teaches the surprise-me sampler
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        {OPTIONS.map(({ v, icon: Icon, label, hint }) => (
+          <button
+            key={v}
+            type="button"
+            disabled={busy}
+            title={hint}
+            onClick={() => void send(v)}
+            className={`flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs transition disabled:opacity-50 ${
+              current === v
+                ? 'border-orange bg-orange/15 text-orange'
+                : 'border-hairline text-dim hover:text-cream hover:border-cream/30'
+            }`}
+          >
+            <Icon size={13} />
+            {label}
+          </button>
+        ))}
+        {current && <span className="font-mono text-[10px] text-dim">recorded · ideation {ideationIndex + 1}</span>}
+      </div>
+      <input
+        type="text"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="optional: what worked or failed (sent with the next click)"
+        maxLength={2000}
+        className="w-full rounded border border-hairline bg-base px-2 py-1.5 text-xs placeholder:text-dim/60"
+      />
+      {failed && <p className="text-[11px] text-red-400">verdict not saved — {failed}</p>}
+    </div>
+  );
+}
 
 function IdeationCard({ ideation, active, onPick }: { ideation: Ideation; active: boolean; onPick: () => void }) {
   return (
@@ -329,6 +412,12 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
               <IdeationCard key={i.index} ideation={i} active={picked === i.index} onPick={() => setPicked(i.index)} />
             ))}
           </div>
+          <VerdictBar
+            runId={run.id}
+            ideationIndex={picked}
+            current={run.verdict}
+            onChange={(v) => setRun((r) => (r ? { ...r, verdict: v } : r))}
+          />
           {run.ideations[picked] && <IdeationDetail ideation={run.ideations[picked]} />}
           <p className="text-[10px] font-mono text-dim text-right">
             run {run.id.slice(0, 8)} · {run.generatorVersion} · saved to history

@@ -19,6 +19,11 @@ export const VideoModelChoiceSchema = z.enum(['kling_3', 'cdance_2']);
 export const VideoFormatSchema = z.enum(['ONE_SHOT', 'MULTI_CLIP']);
 export const VariationStrengthSchema = z.enum(['close', 'medium', 'bold']);
 export const GenerationStatusSchema = z.enum(['draft', 'approved', 'produced']);
+/** Operator feedback on a finished run. A SECOND, INDEPENDENT axis from `status`
+ *  (draft|approved|produced) — the two vocabularies are deliberately not merged, so
+ *  "where is this in the pipeline" and "was it any good" never collide. Stored in its
+ *  own columns (migration 0004), never in the run's output JSON. */
+export const GenerationVerdictSchema = z.enum(['up', 'down', 'shipped']);
 export const DifficultyScoreSchema = z.union([
   z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5),
 ]);
@@ -758,6 +763,22 @@ export const GenerationRunSchema = z.object({
   ideations: z.array(IdeationSchema),
   createdAt: z.string(),
   generatorVersion: z.string(),
+  // ── operator feedback (migration 0004) ──
+  // These live in their own D1 COLUMNS, not inside the stored output blob: the blob is
+  // written once at generation time and a verdict arrives later, so persisting it there
+  // would mean rewriting the run JSON on every thumb. GET /generations/:id merges the
+  // columns onto the response, which is why they are optional here.
+  verdict: GenerationVerdictSchema.optional(),
+  verdictNote: z.string().optional(),
+  verdictAt: z.string().optional(),
+  verdictIdeation: z.number().int().optional(),   // which of the 3 cards was judged
+});
+
+/** PATCH /generations/:id body. `note` is capped so a pasted essay cannot bloat the row. */
+export const GenerationVerdictPatchSchema = z.object({
+  verdict: GenerationVerdictSchema,
+  ideationIndex: z.number().int().min(0).max(50).optional(),
+  note: z.string().max(2000).optional(),
 });
 
 // ─────────────────────────────────────────────────────────────
