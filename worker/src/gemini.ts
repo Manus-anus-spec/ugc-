@@ -35,6 +35,21 @@ function classifyGeminiHttpError(status: number, body: string, context: string):
       'rate_limit',
     );
   }
+  // Gemini geolocates the CALLER, and a Cloudflare Worker's caller is whichever colo served
+  // the request — this account has been served from SIN. From some colos Gemini refuses
+  // outright with a 400. Observed live: 64 formats scored fine, then an entire batch failed
+  // with this, then it worked again minutes later on retry. It is transient and nothing is
+  // wrong with the key, the model, the billing or the video — so say that, because the raw
+  // 400 blob reads like a broken app on a paid run and sends you looking in the wrong place.
+  if (status === 400 && /location is not supported/i.test(body)) {
+    return new GeminiQuotaError(
+      `${context}: Gemini refused this request based on the CALLER'S LOCATION. This is a ` +
+      'Cloudflare edge-routing effect (the Worker egresses from whichever colo served the ' +
+      'request), not a problem with the key, the model, the billing or the video. It is ' +
+      'intermittent — retry in a minute and it usually succeeds from a different colo.',
+      'rate_limit',   // treated as retryable, NOT as a spend cap: it must not burn the fallback key
+    );
+  }
   return new Error(`${context} ${status}: ${body.slice(0, 500)}`);
 }
 
