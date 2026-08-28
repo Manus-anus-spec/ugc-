@@ -34,6 +34,7 @@ ROUTE_FILES = [
     "worker/src/routes/insights.ts",
     "worker/src/routes/generate.ts",
     "worker/src/spend.ts",
+    "worker/src/routes/rescore.ts",
 ]
 
 DNA_FIXTURE = """{"hook":{"type":"visual","openingVisual":"x","mechanism":"y"},
@@ -97,7 +98,10 @@ def run_extracted(con: sqlite3.Connection) -> tuple[int, int]:
             sql = lit.strip()
             found += 1
             try:
-                con.execute(sql, tuple(["f1"] * sql.count("?"))).fetchall()
+                # Integer dummies, not strings: a string bound into `LIMIT ?` raises
+                # "datatype mismatch" and looks like a query bug when it is a harness bug.
+                # Integers are valid in LIMIT and harmless in a WHERE against text columns.
+                con.execute(sql, tuple([1] * sql.count("?"))).fetchall()
             except sqlite3.Error as e:
                 failed += 1
                 flat = " ".join(sql.split())
@@ -170,6 +174,18 @@ def main() -> int:
     other = con.execute(upsert, ("niko", "2026-08-28", "analyze")).fetchone()
     assert other == (1,), f"caps must be per-operator: {other}"
     print("api_usage upsert increments atomically and is per-operator")
+
+    # The rescore candidate query: rows NOT already on the current rubric. f1/f2 are stored
+    # without a rubricVersion, so both must be candidates; a row stamped with the current
+    # version must not be. This is what makes rescoring idempotent instead of double-charging.
+    cand = ("SELECT id FROM formats WHERE schema_version != '0-legacy' "
+            "AND (json_extract(dna, '$.virality.rubricVersion') IS NULL "
+            "     OR json_extract(dna, '$.virality.rubricVersion') != ?) ORDER BY id")
+    assert [r[0] for r in con.execute(cand, ("3",)).fetchall()] == ["f1", "f2"], "unstamped rows must be candidates"
+    con.execute("UPDATE formats SET dna = json_set(dna, '$.virality.rubricVersion', '3') WHERE id='f1'")
+    assert [r[0] for r in con.execute(cand, ("3",)).fetchall()] == ["f2"], "a current-rubric row must NOT be rescored again"
+    con.execute("UPDATE formats SET dna = json_remove(dna, '$.virality.rubricVersion') WHERE id='f1'")
+    print("rescore candidate query is idempotent (stamped rows are excluded)")
 
     paths = con.execute(
         """SELECT json_extract(dna,'$.hook.type'),

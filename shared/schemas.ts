@@ -172,11 +172,20 @@ export const ViralityDimensionSchema = z.object({
  *
  *  WHY THIS MATTERS MORE THAN IT LOOKS: virality_score drives the surprise sampler as
  *  score², so scores from different rubrics are not interchangeable — mixing them silently
- *  reweights the whole library. '1' is every score produced before 2026-08-28. '2' adds the
- *  Four-S hook evaluation. Existing rows are deliberately NOT rescored (that would cost real
- *  money for no output gain), so the library holds both and this field is what makes them
- *  distinguishable instead of quietly incomparable. */
-export const RUBRIC_VERSION = '2';
+ *  reweights the whole library.
+ *    '1' — every score produced before 2026-08-28.
+ *    '2' — adds the Four-S hook evaluation.
+ *    '3' — RECALIBRATION. Measured on the live library, rubric 1/2 scored 41% of a
+ *          hand-curated set of proven performers under 40, because the instruction told the
+ *          scorer to assume failure and to break every tie downward. That is the wrong prior
+ *          for a corpus of winners, and it is actively costly: the sampler weights by score²,
+ *          so a wrongly-low score buries a good blueprint. Rubric 3 keeps the absolute
+ *          yardstick, the evidence rule and the no-credit-for-polish rule, and replaces the
+ *          flop prior + always-lower tie-break with evidence-led scoring.
+ *  Rows are rescored EXPLICITLY via POST /admin/rescore-virality, never automatically — the
+ *  operator decides when to spend on it, and this field is what keeps the two calibrations
+ *  distinguishable in the meantime instead of quietly incomparable. */
+export const RUBRIC_VERSION = '3';
 
 export const ViralityScorecardSchema = z.object({
   /** Absent = rubric '1' (pre-2026-08-28). Never backfilled. */

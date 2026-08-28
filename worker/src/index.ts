@@ -19,6 +19,7 @@ import { getJob } from './routes/jobs';
 import { backfillTaxonomy } from './routes/admin';
 import { synthesisCoverage } from './routes/coverage';
 import { libraryInsights } from './routes/insights';
+import { rescoreVirality } from './routes/rescore';
 import { qaBeat } from './routes/qa';
 
 export default {
@@ -131,6 +132,11 @@ export default {
       // Pure aggregation in SQLite — no Gemini call, no cost.
       if (m === 'GET' && seg[0] === 'admin' && seg[1] === 'library-insights' && seg.length === 2) {
         return await libraryInsights(req, env);
+      }
+      // Rescore stored formats onto the current rubric. Batched, idempotent, and NEVER
+      // automatic — it overwrites scores and spends Gemini money, both operator decisions.
+      if (m === 'POST' && seg[0] === 'admin' && seg[1] === 'rescore-virality' && seg.length === 2) {
+        return await rescoreVirality(req, env, ctx);
       }
       if (m === 'POST' && seg[0] === 'admin' && seg[1] === 'backfill-taxonomy' && seg.length === 2) {
         return await backfillTaxonomy(req, env, ctx);

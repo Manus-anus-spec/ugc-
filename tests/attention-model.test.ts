@@ -80,7 +80,8 @@ test('a scorecard with NO rubricVersion is still valid — absent means rubric 1
 test('scores from different rubrics stay DISTINGUISHABLE, not silently mixed', () => {
   // virality_score drives the sampler as score², so an unlabelled mix would quietly
   // reweight the whole library. The stamp is the whole point.
-  assert.equal(RUBRIC_VERSION, '2');
+  // Deliberately version-AGNOSTIC: the point is that the stamp is applied and round-trips,
+  // not which number it currently holds. tests/rubric-recalibration.test.ts pins the number.
   const v2 = ViralityScorecardSchema.safeParse({
     rubricVersion: RUBRIC_VERSION, overall: 72, verdict: 'v',
     dimensions: {
@@ -90,7 +91,7 @@ test('scores from different rubrics stay DISTINGUISHABLE, not silently mixed', (
     },
     strengths: [], weaknesses: [], ceiling: 'c', improvements: [],
   });
-  assert.equal(v2.data?.rubricVersion, '2');
+  assert.equal(v2.data?.rubricVersion, RUBRIC_VERSION);
 });
 
 // ─────────────────────────────────────────────────────────────
