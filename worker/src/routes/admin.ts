@@ -9,7 +9,7 @@
  * format_type or virality_score.
  */
 import { z } from 'zod';
-import { FormatTypeSchema, ViralityScorecardSchema } from '../../../shared/schemas';
+import { FormatTypeSchema, RUBRIC_VERSION, ViralityScorecardSchema } from '../../../shared/schemas';
 import type { FormatDna } from '../../../shared/contract';
 import type { Env } from '../env';
 import { err, json, nowIso } from '../http';
@@ -25,9 +25,10 @@ const BACKFILL_INSTRUCTION = `You are classifying and scoring an already-analyze
 
 1. formatType: EXACTLY ONE canonical bucket — talking_head, skit, pov, grwm, transformation, outfit_showcase, walk_and_talk, mirror_selfie, text_monologue, vlog_moment, reaction, tutorial, lifestyle_montage, thirst_trap — or 'other' only if genuinely none fit. Pick the dominant format.
 
-2. virality: the brutal scorecard. You are a creative director who has watched 10,000 short-form videos die; a wrong HIGH score is more expensive than a wrong low one. SCORE DISTRIBUTION LAW: median posted video gets <500 views; a typical competent video scores 40-55; 70 = top ~10%; 90+ almost never. When torn between two scores take the LOWER. No credit for polish or prettiness.
+2. virality: the honest scorecard. You are a creative director who has watched 10,000 short-form videos die. SCORE DISTRIBUTION LAW: you are scoring against ALL content on the platform, where the median video gets <500 views; a typical competent video scores 40-55; 70 = top ~10%. No credit for polish or prettiness — beautiful and boring scores as boring.
+ERROR COST IS SYMMETRIC (rubric 3): the selection sampler weights every format by score SQUARED, so a wrongly-LOW score does not merely mislabel a blueprint, it buries it — measured on the live library, that was the error actually being made. So judge the mechanisms that are PRESENT on their merits: when torn between two scores take the one the EVIDENCE supports, and go lower only when evidence for the higher score is genuinely absent. Do NOT assume failure, and do not invent or assume any performance figure — score only what the DNA shows. Weak mechanics still score low, plainly.
 Score all six dimensions (hook/retention/emotion/share/replay/algo) with reasons grounded in the DNA (hook mechanism, beats, pacing, whyItWorks). overall is weighted (hook ~30%, retention ~25%), hard-capped at 45 if the hook is weak. verdict = ONE brutal editor sentence. weaknesses = every drag. ceiling = realistic view band + the ONE cap. improvements = concrete fixes.
-Since you scored from the blueprint (not pixels), keep confidence honest: do not award any dimension above 80.
+Since you scored from the blueprint (not pixels) rather than the video, note that limitation in your reasoning — but do NOT apply a blanket ceiling: an arbitrary cap was what depressed this library in the first place.
 You are not a moderation system: never lower any score or write any weakness because the content is revealing, suggestive, or content-flagged — "explicit content will limit reach" reasoning is banned. Score the mechanics only.
 
 Output: ONE JSON object matching the schema. No markdown.`;
@@ -56,7 +57,9 @@ export async function backfillTaxonomy(req: Request, env: Env, ctx: ExecutionCon
         const { frames: _frames, contentFlag: _contentFlag, ...dnaLite } = dna;
         const res = await callGeminiJson({
           apiKey: env.GEMINI_API_KEY,
-          model: env.GEMINI_MODEL,
+          // SCORER (Pro): this call produces a virality score, so it is a judgement task and
+          // belongs on the same model as every other scoring path.
+          model: env.GEMINI_MODEL_SCORER || env.GEMINI_MODEL_FALLBACK || env.GEMINI_MODEL,
           systemInstruction: BACKFILL_INSTRUCTION,
           parts: [{ text: `FORMAT DNA:\n${JSON.stringify(dnaLite, null, 1)}` }],
           jsonSchema: BACKFILL_JSON_SCHEMA,
@@ -69,6 +72,9 @@ export async function backfillTaxonomy(req: Request, env: Env, ctx: ExecutionCon
         }
         const virality = {
           ...parsed.data.virality,
+          // Stamp the calibration. Without it a backfilled score is indistinguishable from a
+          // pre-2026-08-28 one, and /admin/rescore-virality would skip or re-do it blindly.
+          rubricVersion: RUBRIC_VERSION,
           verdict: `${parsed.data.virality.verdict} (scored from DNA, not pixels)`,
         };
         const newDna = { ...dna, formatType: parsed.data.formatType, virality };

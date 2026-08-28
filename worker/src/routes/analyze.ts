@@ -694,7 +694,13 @@ async function scoreVirality(env: Env, apiKey: string, perception: PerceptionOut
 
   const doCall = (text: string) => callGeminiJson({
     apiKey,
-    model: env.GEMINI_MODEL_FAST || env.GEMINI_MODEL,
+    // SCORER (Pro), not FAST. This was the last place the old spend split still applied to a
+    // JUDGEMENT rather than a perception task: every new analysis was scored by Flash, so the
+    // library would have drifted straight back toward the pre-rubric-3 calibration as
+    // material was added — undoing the rescore one upload at a time. The Pass-A boundary map
+    // and the motion micro-pass above still use FAST, correctly: those are mechanical
+    // perception over video, not judgement.
+    model: env.GEMINI_MODEL_SCORER || env.GEMINI_MODEL_FALLBACK || env.GEMINI_MODEL,
     systemInstruction: VIRALITY_SYSTEM_INSTRUCTION,
     parts: [{ text }],
     jsonSchema: VIRALITY_JSON_SCHEMA,
