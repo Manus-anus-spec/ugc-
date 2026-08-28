@@ -18,6 +18,10 @@ export interface Env {
   /** §P2 spend guards — per-operator daily call caps on the two paid endpoints. Optional:
    *  absent or unparseable falls back to the defaults in spend.ts (never to zero, which
    *  would block every paid call). */
+  /** Model for the VIRALITY SCORER specifically. Defaults to the Pro fallback, not FAST:
+   *  this score decides which blueprints get reused downstream, so it is the wrong place
+   *  to economise. Overridable without a code change. */
+  GEMINI_MODEL_SCORER?: string;
   DAILY_CAP_ANALYZE?: string;
   DAILY_CAP_GENERATE?: string;
   /** Self service binding (wrangler.toml [[services]]) — /generate fans each ideation

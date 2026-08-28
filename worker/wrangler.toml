@@ -19,6 +19,10 @@ GEMINI_MODEL_FALLBACK = "gemini-2.5-pro"
 # gemini-2.5-flash validated live on this pipeline 2026-07-21 (golden test); swap to a
 # gemini-3.x flash id via var if/when ListModels shows one.
 GEMINI_MODEL_FAST = "gemini-2.5-flash"
+# The virality scorer runs on PRO, not FAST. This number decides which library blueprints
+# get reused for every downstream generation, so it is the last place to save money —
+# measured at roughly $3-6 to score the whole 169-format library.
+GEMINI_MODEL_SCORER = "gemini-2.5-pro"
 ALLOWED_ORIGINS = "https://manus-anus-spec.github.io,http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173"
 # §P2 spend guards: per-operator, per-UTC-day call caps on the two endpoints that cost
 # Gemini money. High enough that normal work never notices; low enough that a leaked token

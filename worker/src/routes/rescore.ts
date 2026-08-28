@@ -44,30 +44,38 @@ export async function rescoreVirality(req: Request, env: Env, ctx: ExecutionCont
   const url = new URL(req.url);
   const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 10) || 10, 1), 25);
   const dryRun = url.searchParams.get('dryRun') === '1';
+  // force=1 ignores the rubricVersion stamp. Needed when the SCORER MODEL changes without
+  // the rubric text changing: 14 rows were already stamped rubric 3 by Flash, and the
+  // idempotency filter would otherwise skip exactly the rows that most need redoing.
+  const force = url.searchParams.get('force') === '1';
 
   // Candidates: anything not already on the current rubric. json_extract returns NULL for
   // rows predating the field, which is exactly the set that needs rescoring.
   const { results } = await env.DB.prepare(
     `SELECT id, title, dna, virality_score FROM formats
       WHERE schema_version != '0-legacy'
-        AND (json_extract(dna, '$.virality.rubricVersion') IS NULL
-             OR json_extract(dna, '$.virality.rubricVersion') != ?)
+        AND (?1 = 1
+             OR json_extract(dna, '$.virality.rubricVersion') IS NULL
+             OR json_extract(dna, '$.virality.rubricVersion') != ?2)
       ORDER BY virality_score ASC
-      LIMIT ?`,
-  ).bind(RUBRIC_VERSION, limit).all<Row>();
+      LIMIT ?3`,
+  ).bind(force ? 1 : 0, RUBRIC_VERSION, limit).all<Row>();
 
   const remainingRow = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM formats
       WHERE schema_version != '0-legacy'
-        AND (json_extract(dna, '$.virality.rubricVersion') IS NULL
-             OR json_extract(dna, '$.virality.rubricVersion') != ?)`,
-  ).bind(RUBRIC_VERSION).first<{ n: number }>();
+        AND (?1 = 1
+             OR json_extract(dna, '$.virality.rubricVersion') IS NULL
+             OR json_extract(dna, '$.virality.rubricVersion') != ?2)`,
+  ).bind(force ? 1 : 0, RUBRIC_VERSION).first<{ n: number }>();
   const remaining = remainingRow?.n ?? 0;
 
   if (dryRun) {
     // Lets the operator see the bill and the batch before spending anything.
     return json({
-      dryRun: true, rubricVersion: RUBRIC_VERSION, wouldRescore: results.length, remaining,
+      dryRun: true, force, rubricVersion: RUBRIC_VERSION,
+      scorerModel: env.GEMINI_MODEL_SCORER || env.GEMINI_MODEL_FALLBACK || env.GEMINI_MODEL,
+      wouldRescore: results.length, remaining,
       estimatedInputTokensThisBatch: results.reduce((n, r) => n + Math.round(r.dna.length / 4), 0),
       batch: results.map((r) => ({ id: r.id, title: r.title, currentScore: r.virality_score })),
     }, 200, req, env);
@@ -90,7 +98,11 @@ export async function rescoreVirality(req: Request, env: Env, ctx: ExecutionCont
         const { frames: _frames, contentFlag: _contentFlag, virality: _old, ...dnaLite } = dna;
         const res = await withGeminiKeyFailover(geminiKeys(env), (apiKey) => callGeminiJson({
           apiKey,
-          model: env.GEMINI_MODEL_FAST || env.GEMINI_MODEL,
+          // PRO, not FAST. The analyze path scores on GEMINI_MODEL_FAST as a deliberate
+          // spend split (keep Pro for grounded video perception), but this number decides
+          // which blueprints get REUSED for every downstream generation — it is the last
+          // place to economise. ~$3-6 to score the whole library on Pro.
+          model: env.GEMINI_MODEL_SCORER || env.GEMINI_MODEL_FALLBACK || env.GEMINI_MODEL,
           systemInstruction: VIRALITY_SYSTEM_INSTRUCTION,
           parts: [{ text: `FORMAT DNA:\n${JSON.stringify(dnaLite, null, 1)}` }],
           jsonSchema: VIRALITY_JSON_SCHEMA,
