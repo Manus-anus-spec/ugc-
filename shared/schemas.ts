@@ -168,7 +168,19 @@ export const ViralityDimensionSchema = z.object({
   reason: z.string(),               // brutal, pixel-specific justification — never generic praise
 });
 
+/** Which calibration produced a score.
+ *
+ *  WHY THIS MATTERS MORE THAN IT LOOKS: virality_score drives the surprise sampler as
+ *  score², so scores from different rubrics are not interchangeable — mixing them silently
+ *  reweights the whole library. '1' is every score produced before 2026-08-28. '2' adds the
+ *  Four-S hook evaluation. Existing rows are deliberately NOT rescored (that would cost real
+ *  money for no output gain), so the library holds both and this field is what makes them
+ *  distinguishable instead of quietly incomparable. */
+export const RUBRIC_VERSION = '2';
+
 export const ViralityScorecardSchema = z.object({
+  /** Absent = rubric '1' (pre-2026-08-28). Never backfilled. */
+  rubricVersion: z.string().optional(),
   overall: z.number(),              // 0-100; 50 = average posted video, 80+ = genuine viral mechanics
   verdict: z.string(),              // ONE brutal sentence — what a no-bullshit editor would say
   dimensions: z.object({
@@ -194,12 +206,56 @@ export const ViralityForecastSchema = z.object({
   boosters: z.array(z.string()),    // what to nail in production to hit the ceiling
 });
 
+/** ATTENTION MODEL (2026-08-28) — the hook as THREE SIMULTANEOUS CHANNELS, not one.
+ *
+ *  `hook.type` is a single enum, which quietly encodes a wrong belief: that a video has one
+ *  hook. The strongest hooks fire text, speech and image at the same instant, each one
+ *  independently capable of stopping the scroll — so a video that "works on mute" and a video
+ *  that "works in a pocket" are different tests and a good hook passes both. Capturing the
+ *  channels separately is what lets the library answer which COMBINATIONS actually score.
+ *
+ *  All optional: 169 formats are already stored without them, and per this repo's standing
+ *  rule the analyzer is ASKED for fields in the prompt while the schema stays lenient, so a
+ *  dropped field can never 502 a paid run. */
+export const HookChannelsSchema = z.object({
+  /** On-screen text in the first ~2s — the overlay a muted viewer reads. '' = none present. */
+  text: z.string().optional(),
+  /** The first spoken words — what a viewer scrolling with sound hears. */
+  spoken: z.string().optional(),
+  /** The visual event itself — what a viewer sees before reading or hearing anything. */
+  visual: z.string().optional(),
+  /** How many of the three independently stop a scroll — expected 0-3. The number that
+   *  matters most in this whole block.
+   *
+   *  NO .min()/.max() ON PURPOSE, though not for the reason it first appears. Numeric
+   *  minimum/maximum are NOT rejected by Gemini: z.number().int() already emits them at
+   *  ±MAX_SAFE_INTEGER, and beats[].index / clipIndex / pacing.cutCount have carried them
+   *  across 169 successful live analyses. The concern is narrower — a TIGHT range is a real
+   *  constraint on constrained decoding rather than a no-op, and this schema is fed to
+   *  Gemini as a responseJsonSchema. Unverified decoding risk on a paid endpoint buys
+   *  nothing here: the range is stated in the prompt, and an out-of-range value is a data
+   *  curiosity while a 400 on every analyze is an outage. Enforced by a test in
+   *  tests/gemini-parsing.test.ts. */
+  stackedCount: z.number().int().optional(),
+});
+
 export const HookSchema = z.object({
   type: z.enum(['visual', 'text', 'question', 'mid_action', 'pattern_interrupt', 'audio']),
   openingVisual: z.string(),        // what is literally on screen at 0:00
   firstLineOrText: z.string().optional(),
   mechanism: z.string(),            // WHY it stops the thumb
   coherenceWithCaption: z.string().optional(),
+  // ── attention model ──
+  channels: HookChannelsSchema.optional(),
+  /** STAKES — why the viewer should care, established inside ~2s. The most commonly missing
+   *  ingredient: a hook can be visually arresting and still lose the scroll because nothing
+   *  is at stake. "Her whole tray is about to tip" is stakes; "she is cooking" is not. */
+  stakes: z.string().optional(),
+  /** LOCK-IN (≈2-5s) — what holds attention AFTER the hook fires and BEFORE the payoff
+   *  lands. The bridge across which most videos are actually lost. */
+  lockIn: z.string().optional(),
+  /** Does the hook survive without sound? A muted-autoplay feed is the default condition. */
+  worksOnMute: z.boolean().optional(),
 });
 
 // ── Beat = the atomic unit of the shot list ──
@@ -359,6 +415,16 @@ export const FormatDnaSchema = z.object({
     retentionDrivers: z.array(z.string()),
     targetViewer: z.string(),
     shareCommentTrigger: z.string().optional(),
+    /** IDENTITY, not demographics. `targetViewer` answers "who watches this"; this answers
+     *  "who does the viewer get to BE by watching or sharing it". People act on identity and
+     *  emotional outcome, not on features — so an ideation aimed at a demographic reads
+     *  generic while one aimed at an identity lands. */
+    viewerIdentity: z.string().optional(),
+    /** WHY SHARING MAKES THE SHARER LOOK GOOD. The real share mechanic: nobody forwards a
+     *  video to help the creator, they forward it because posting it says something
+     *  flattering about them (funny, in-the-know, tasteful, righteous). Distinct from
+     *  shareCommentTrigger, which is about what prompts the comment. */
+    sharerPayoff: z.string().optional(),
   }),
   difficulty: z.object({
     environment: DifficultyScoreSchema,
@@ -706,6 +772,31 @@ export const LipSyncPlanSchema = z.object({
 });
 
 /** One of the ~3 treatments: keeps whyItWorks + swapMap.mustKeep, reinvents the rest. */
+/** The ideation's explicit answer to "why would a stranger stop, stay, and share this".
+ *
+ *  WHY IT EXISTS: the app was producing competent scene descriptions with no stated
+ *  attention thesis, and nothing forced the generator to name one. A brief that cannot say
+ *  what is at stake, what holds the 2-5s gap, and why sharing flatters the sharer is a brief
+ *  that produces slop. Required of the LLM by the generator prompt; optional on the stored
+ *  IdeationSchema so every run from before 2026-08-28 keeps parsing. */
+export const AttentionPlanSchema = z.object({
+  // ── the Four S's of the hook ──
+  subject: z.string(),        // what this is about, legible in ONE glance
+  stakes: z.string(),         // why a stranger should care within ~2s (most commonly absent)
+  speed: z.string(),          // how the hook lands fast — and what was CUT to get there
+  simplicity: z.string(),     // the single idea, plus what was deliberately left out
+  // ── the three hook channels, because a hook is not one thing ──
+  // The feed autoplays MUTED, so text + visual must carry it with no sound at all, and the
+  // spoken line then has to reward turning sound on.
+  hookText: z.string(),       // on-screen overlay in the first ~2s
+  hookSpoken: z.string(),     // the first words heard
+  hookVisual: z.string(),     // the event seen before anything is read or heard
+  // ── the rest of the attention arc ──
+  lockIn: z.string(),         // what holds attention from the hook to the payoff (≈2-5s)
+  viewerIdentity: z.string(), // who the viewer gets to BE — identity, never a demographic
+  sharerPayoff: z.string(),   // why POSTING this flatters the person who posts it
+});
+
 export const IdeationSchema = z.object({
   index: z.number().int(),          // 0..N within the run
   title: z.string(),                // short name of this angle
@@ -716,6 +807,15 @@ export const IdeationSchema = z.object({
    *  theme. Required by the prompt when world.contentPersona is set; optional here so
    *  pre-framework rows and persona-less profiles keep parsing. */
   themeFit: z.string().optional(),
+  /** ATTENTION PLAN (2026-08-28) — the ideation's explicit answer to "why would anyone stop,
+   *  stay, and share this". Required by the generator prompt; optional here so every stored
+   *  run from before this existed keeps parsing.
+   *
+   *  This exists because the app was generating competent scene descriptions with no stated
+   *  attention thesis. A brief that cannot name its own stakes, its lock-in, and why sharing
+   *  flatters the sharer is a brief that produces slop — and until now nothing forced the
+   *  generator to name any of the three. */
+  attentionPlan: AttentionPlanSchema.optional(),
   whyItWorksForProfile: z.string(), // the OG mechanism re-aimed at THIS profile's ICP
   creativeBrief: z.string(),
   videoModel: z.object({ choice: VideoModelChoiceSchema, reason: z.string() }),

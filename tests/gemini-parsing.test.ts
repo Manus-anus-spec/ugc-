@@ -95,6 +95,28 @@ test('the real PerceptionOutput JSON Schema survives the Gemini decoder rules', 
   assert.ok(!safe.includes('maxItems'));
 });
 
+test('no TIGHT numeric bounds reach the Gemini schema (wide .int() bounds are fine)', () => {
+  // Documenting a real finding so nobody re-derives it wrongly, as I first did.
+  //
+  // geminiSafeSchema strips minItems/maxItems but NOT minimum/maximum — and it does not need
+  // to. Zod 4 emits minimum/maximum of ±MAX_SAFE_INTEGER for EVERY z.number().int(), so
+  // beats[].index, clipIndex, sourceBeatIndex and pacing.cutCount have all carried numeric
+  // bounds since v3, across 169 successful live analyses. The keyword is plainly accepted.
+  //
+  // What is NOT proven safe is a TIGHT bound (e.g. .min(0).max(3)): a narrow range is a real
+  // constraint on constrained decoding rather than a no-op, which is a different risk from
+  // an unsupported keyword. So tight bounds stay out of the analyzer schema and ranges are
+  // stated in the prompt instead. This test enforces that distinction.
+  const safe = JSON.stringify(geminiSafeSchema(z.toJSONSchema(PerceptionOutputSchema) as Record<string, unknown>));
+  const bounds = [...safe.matchAll(/"(?:minimum|maximum)":(-?\d+)/g)].map((m) => Math.abs(Number(m[1])));
+  assert.ok(bounds.length > 0, 'expected the wide .int() bounds to be present');
+  for (const b of bounds) {
+    assert.equal(b, Number.MAX_SAFE_INTEGER, `a tight numeric bound (${b}) reached the Gemini schema`);
+  }
+  assert.ok(!safe.includes('exclusiveMinimum'));
+  assert.ok(!safe.includes('exclusiveMaximum'));
+});
+
 // ─────────────────────────────────────────────────────────────
 // Spend safety — the #1 real outage is the monthly cap
 // ─────────────────────────────────────────────────────────────

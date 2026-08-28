@@ -37,7 +37,15 @@ const FACTS_SQL = `
          json_extract(f.dna, '$.virality.dimensions.emotion.score')    AS dim_emotion,
          json_extract(f.dna, '$.virality.dimensions.share.score')      AS dim_share,
          json_extract(f.dna, '$.virality.dimensions.replay.score')     AS dim_replay,
-         json_extract(f.dna, '$.virality.dimensions.algo.score')       AS dim_algo
+         json_extract(f.dna, '$.virality.dimensions.algo.score')       AS dim_algo,
+         -- attention model (2026-08-28). Absent on every pre-existing row, which is itself
+         -- the finding: coverage climbs only as the library is re-analysed.
+         json_extract(f.dna, '$.virality.rubricVersion')           AS rubric_version,
+         json_extract(f.dna, '$.hook.channels.stackedCount')       AS hook_channels,
+         json_extract(f.dna, '$.hook.worksOnMute')                 AS works_on_mute,
+         json_extract(f.dna, '$.hook.stakes')                      AS stakes,
+         json_extract(f.dna, '$.hook.lockIn')                      AS lock_in,
+         json_extract(f.dna, '$.whyItWorks.sharerPayoff')          AS sharer_payoff
     FROM formats f
    WHERE f.schema_version != '0-legacy' AND f.virality_score IS NOT NULL
 `;
@@ -62,6 +70,8 @@ type Fact = {
   one_shot: number | null; duration_sec: number | null;
   dim_hook: number | null; dim_retention: number | null; dim_emotion: number | null;
   dim_share: number | null; dim_replay: number | null; dim_algo: number | null;
+  rubric_version: string | null; hook_channels: number | null; works_on_mute: number | null;
+  stakes: string | null; lock_in: string | null; sharer_payoff: string | null;
 };
 type ArrayRow = { value: string; n: number; avg_score: number };
 
@@ -163,6 +173,47 @@ export async function libraryInsights(req: Request, env: Env): Promise<Response>
 
     // WHICH LEVER MATTERS MOST — ranked by correlation with the overall score.
     dimensionAnalysis,
+
+    // ── ATTENTION MODEL (2026-08-28) ──
+    // Answers the questions the library could not answer before: do multi-channel hooks
+    // actually score, does muted-viability matter, and do videos that establish STAKES beat
+    // videos that don't. `covered` is reported on every block because these fields exist
+    // only on formats analysed under rubric 2 — a small n here is a coverage fact, not a
+    // weak signal, and conflating the two would be the easiest mistake to make with it.
+    attention: {
+      covered: scored.filter((f) => f.rubric_version !== null).length,
+      corpus: scored.length,
+      note: 'Fields below exist only on formats analysed after 2026-08-28. Re-analyse a format to populate them; nothing is backfilled.',
+      byHookChannelCount: [0, 1, 2, 3].map((n) => {
+        const fs = scored.filter((f) => f.hook_channels === n);
+        return { channelsStacked: n, formats: fs.length, avgScore: mean(fs.map((f) => f.overall)) };
+      }),
+      muteViability: [1, 0].map((v) => {
+        const fs = scored.filter((f) => f.works_on_mute !== null && Number(f.works_on_mute) === v);
+        return { worksOnMute: v === 1, formats: fs.length, avgScore: mean(fs.map((f) => f.overall)) };
+      }),
+      // The hypothesis worth testing on your own library: stakes-in-2s beats no stakes.
+      stakesEstablished: [true, false].map((has) => {
+        const fs = scored.filter((f) => f.rubric_version !== null && Boolean(f.stakes?.trim()) === has);
+        return { hasStakes: has, formats: fs.length, avgScore: mean(fs.map((f) => f.overall)) };
+      }),
+      lockInNamed: [true, false].map((has) => {
+        const fs = scored.filter((f) => f.rubric_version !== null && Boolean(f.lock_in?.trim()) === has);
+        return { hasLockIn: has, formats: fs.length, avgScore: mean(fs.map((f) => f.overall)) };
+      }),
+      sharerPayoffNamed: [true, false].map((has) => {
+        const fs = scored.filter((f) => f.rubric_version !== null && Boolean(f.sharer_payoff?.trim()) === has);
+        return { hasSharerPayoff: has, formats: fs.length, avgScore: mean(fs.map((f) => f.overall)) };
+      }),
+    },
+
+    // Scores from different rubrics are NOT interchangeable — virality_score drives the
+    // sampler as score². This split is what keeps that visible instead of silently mixed.
+    rubricVersions: [...new Set(scored.map((f) => f.rubric_version ?? '1 (pre-2026-08-28)'))]
+      .map((v) => {
+        const fs = scored.filter((f) => (f.rubric_version ?? '1 (pre-2026-08-28)') === v);
+        return { rubricVersion: v, formats: fs.length, avgScore: mean(fs.map((f) => f.overall)) };
+      }),
 
     hook: {
       byType: [...byHookType.entries()]

@@ -42,6 +42,8 @@ import {
   FormatTypeSchema,
   LipSyncPlanSchema,
   FrameSpecSchema,
+  AttentionPlanSchema,
+  HookChannelsSchema,
   GenerationRunSchema,
   GenerationStatusSchema,
   GenerationVerdictSchema,
@@ -66,6 +68,8 @@ export type VideoModelChoice = z.infer<typeof VideoModelChoiceSchema>;
 export type VideoFormat = z.infer<typeof VideoFormatSchema>;
 export type VariationStrength = z.infer<typeof VariationStrengthSchema>;
 export type GenerationStatus = z.infer<typeof GenerationStatusSchema>;
+export type AttentionPlan = z.infer<typeof AttentionPlanSchema>;
+export type HookChannels = z.infer<typeof HookChannelsSchema>;
 export type GenerationVerdict = z.infer<typeof GenerationVerdictSchema>;
 export type GenerationVerdictPatch = z.infer<typeof GenerationVerdictPatchSchema>;
 export type SdFrameType = z.infer<typeof SdFrameTypeSchema>;

@@ -46,7 +46,17 @@ const frame = {
 const fixture = {
   title: 'Elevator outfit-check freeze', archetype: 'outfit_showcase', formatType: 'outfit_showcase',
   tags: ['outfit', 'elevator'],
-  hook: { type: 'visual', openingVisual: 'subject frozen mid-step in elevator', mechanism: 'motion freeze pattern interrupt' },
+  hook: {
+    // attention model (2026-08-28) — optional in the schema, asked for in the prompt
+    channels: {
+      text: 'POV: you forgot the one thing',
+      spoken: 'wait — did I actually leave it?',
+      visual: 'the elevator doors close on her half-turned face',
+      stackedCount: 3,
+    },
+    stakes: 'she is about to be shut in with the door closing on the thing she forgot',
+    lockIn: 'the doors are still closing and she has not turned around yet',
+    worksOnMute: true, type: 'visual', openingVisual: 'subject frozen mid-step in elevator', mechanism: 'motion freeze pattern interrupt' },
   beats: [beat],
   camera: {
     setup: 'propped_on_surface', facing: 'front', phoneVisible: 'no', distance: '~1.5m propped',
@@ -77,7 +87,12 @@ const fixture = {
     interpolationRisk: 'any frame-interpolated smoothness on the hair swing would betray AI',
   },
   textOverlays: { present: false, cadence: 'none', placement: 'none', copyStyle: 'none', items: [] },
-  whyItWorks: { mechanism: 'freeze-frame curiosity gap', retentionDrivers: ['await the unfreeze'], targetViewer: 'fashion-adjacent scrollers' },
+  whyItWorks: {
+    mechanism: 'freeze-frame curiosity gap', retentionDrivers: ['await the unfreeze'],
+    targetViewer: 'fashion-adjacent scrollers',
+    viewerIdentity: 'the friend who spots the outfit before anyone else does',
+    sharerPayoff: 'sending it says you have an eye for a fit',
+  },
   difficulty: { environment: 2, motion: 1, camera: 1, overall: 2, workarounds: [] },
   swapMap: { mustKeep: ['freeze at 0:02', 'propped knee-height angle'], swappable: ['identity', 'outfit color', 'specific elevator'] },
   contentFlag: { rating: 'sfw', triggers: [] },

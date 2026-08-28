@@ -25,7 +25,7 @@
 import { z } from 'zod';
 import {
   AnalyzerBeatSchema, AnalyzerOutputSchema, BoundaryMapSchema, MotionWindowDetailSchema,
-  PerceptionOutputSchema, ViralityScorecardSchema,
+  PerceptionOutputSchema, RUBRIC_VERSION, ViralityScorecardSchema,
 } from '../../../shared/schemas';
 import type { AnalyzeResponse, FormatDna, PerceptionOutput, Platform, ViralityScorecard } from '../../../shared/contract';
 import { ANALYZE_FIELDS } from '../../../shared/fields';
@@ -648,7 +648,12 @@ async function performAnalysis(env: Env, src: SourceInfo): Promise<FormatDna> {
   }
 
   // ── VIRALITY: text-only, fast model, over the extracted DNA (never re-grounds Pro) ──
-  const virality = await scoreVirality(env, activeKey, perception);
+  const scored = await scoreVirality(env, activeKey, perception);
+  // Stamp the calibration that produced this score. virality_score drives the surprise
+  // sampler as score², so scores from different rubrics are not interchangeable — without
+  // this stamp the library would silently mix two calibrations. Existing rows are NOT
+  // backfilled: absent means rubric '1' (pre-2026-08-28).
+  const virality = { ...scored, rubricVersion: RUBRIC_VERSION };
 
   const dnaCore: PerceptionOutput & { virality: ViralityScorecard } = { ...perception, virality };
   AnalyzerOutputSchema.parse(dnaCore);   // belt-and-braces: the assembled DNA meets the full contract

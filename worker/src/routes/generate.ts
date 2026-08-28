@@ -13,7 +13,8 @@
  */
 import { z } from 'zod';
 import {
-  BeatGenerationSchema, CameraAngleSchema, ContinuityLockSchema, CutTransitionSchema,
+  AttentionPlanSchema, BeatGenerationSchema, CameraAngleSchema, ContinuityLockSchema,
+  CutTransitionSchema,
   EditPlanSchema, FidelityModeSchema, FirstFrameSourceSchema, GenerationRunSchema,
   GenerationVerdictPatchSchema, IdeationSchema,
   LipSyncPlanSchema, ModelProfileSchema, SecondaryMotionSchema, ShotSizeSchema,
@@ -90,6 +91,10 @@ const GeneratedBeatSchema = BeatGenerationSchema.extend({
 // filming fields are REQUIRED on new runs (optional in the stored IdeationSchema
 // only so old rows keep parsing)
 const LlmIdeationExtension = {
+  // Attention plan is REQUIRED of the LLM (Gemini's constrained decoder enforces it) while
+  // the stored IdeationSchema keeps it optional — the standing rule here is that a dropped
+  // field must never 502 a paid run, and every run stored before 2026-08-28 lacks it.
+  attentionPlan: AttentionPlanSchema,
   virality: ViralityForecastSchema,
   editPlan: EditPlanSchema,
   lipSyncPlan: LipSyncPlanSchema,

@@ -142,6 +142,23 @@ Every ideation has beats[]. Every beat carries ALL THREE prompts:
    AESTHETIC BAN: never write "cinematic", "film look", "stunning", "beautiful shot", "4K", "bokeh", "shallow depth of field", "dramatic lighting", or "color graded" as POSITIVE descriptors in any motionPrompt — these flip video models into movie mode. They may only appear inside the NOT-line ("NOT cinematic, no bokeh…"). Lighting words are the STRONGEST cinematizer — write "flat natural lighting", "natural daylight", never "dramatic/moody/golden glow".
    The beat's action/camera/expression/dialogue side fields are UI metadata — fill them too, but treat motionPrompt as the single source of production truth.
 
+# ATTENTION LAWS (fill attentionPlan on EVERY ideation — this is what separates a real idea from slop)
+An ideation that cannot name why a stranger would STOP, STAY and SHARE is not an idea, it is a scene description. Fill every field; "n/a" is not an acceptable answer to any of them.
+
+A1. THE FOUR S's OF THE HOOK. subject = what this is about, legible in ONE glance. stakes = why a stranger should care within ~2 seconds. speed = how fast the hook lands and what you CUT to get there (no run-up, no greeting, no context-before-payoff). simplicity = the ONE idea, plus what you deliberately left out. Weakest S decides the hook — a hook with three strong S's and no stakes still loses the scroll.
+
+A2. STAKES ARE THE MOST COMMONLY MISSING INGREDIENT. A hook can be visually arresting and still die because nothing is at risk. "Her whole tray is about to tip" is stakes. "She is cooking" is not. State what stands to go wrong, be revealed, be lost, or be won.
+
+A3. THE HOOK IS THREE CHANNELS AT ONCE, NOT ONE. hookText (the on-screen overlay in the first ~2s), hookSpoken (the first words heard), hookVisual (the event seen before anything is read or heard). The feed autoplays MUTED, so text + visual must stop the scroll with no sound at all — and the spoken line must then reward turning sound on. Aim for all three to hook independently; a single-channel hook is a weak hook.
+
+A4. LOCK-IN (≈2-5s) IS WHERE MOST VIDEOS ARE ACTUALLY LOST. The hook buys two seconds; something has to hold the next three before the payoff lands. Name it: an unanswered question, a visible countdown to consequence, a motion not yet completed. Never "they keep watching because it's interesting".
+
+A5. IDENTITY OVER PRODUCT. viewerIdentity = who the viewer gets to BE by watching or sharing (in on the joke, the friend who finds the good stuff, the one who saw it first) — an emotional outcome, never a demographic. "Women 18-34" is a media buy, not a reason to watch.
+
+A6. SHARING IS SELFISH — MAKE THE SHARER LOOK GOOD. sharerPayoff = why posting this flatters the person who posts it. Nobody forwards a video to help the creator; they forward it because it says something good about their taste, humour or judgement. If you cannot answer this, the ideation has no share mechanic and you should change the idea.
+
+A7. FAMILIARITY BEATS ORIGINALITY. A recognizable format re-aimed at a fresh subject outperforms an invented one — the format is the vehicle, the subject is the cargo. Reinvent the SURFACE, keep the proven mechanism. Do not chase novelty for its own sake; novelty that nobody recognizes has to earn attention from zero.
+
 # HUMANIZATION LAWS (make every motionPrompt read HUMAN — friend-filmed, not AI-directed)
 These are non-negotiable. A prompt that violates them reads as AI slop no matter how good the idea is.
 1. REACTION, NOT PRESCRIPTION. Never name an expression ("pure disgust", "confident smirk", "intense pleasure", "eyes rolling back", "feigned innocence"). Instead describe what she is REACTING TO and let the feeling emerge; expressions DEVELOP across the beat, they never instant-swap. Write "she catches him looking and her face shifts" — not "she makes a shocked face".
