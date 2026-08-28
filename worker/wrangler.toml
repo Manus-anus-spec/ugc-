@@ -20,6 +20,12 @@ GEMINI_MODEL_FALLBACK = "gemini-2.5-pro"
 # gemini-3.x flash id via var if/when ListModels shows one.
 GEMINI_MODEL_FAST = "gemini-2.5-flash"
 ALLOWED_ORIGINS = "https://manus-anus-spec.github.io,http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173"
+# §P2 spend guards: per-operator, per-UTC-day call caps on the two endpoints that cost
+# Gemini money. High enough that normal work never notices; low enough that a leaked token
+# or a runaway automation retry loop is bounded. Requires migration 0005 (api_usage);
+# without it the guard degrades to allow-and-warn rather than blocking paid work.
+DAILY_CAP_ANALYZE = "60"
+DAILY_CAP_GENERATE = "60"
 
 [[d1_databases]]
 binding = "DB"

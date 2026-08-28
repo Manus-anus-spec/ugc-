@@ -6,6 +6,7 @@
 import type { Env } from './env';
 import { GeminiQuotaError } from './gemini';
 import { authenticate } from './auth';
+import { capMessage, countPaidCall } from './spend';
 import { err, handleOptions, json } from './http';
 import { analyze } from './routes/analyze';
 import { generate, generateVariant, getGeneration, listGenerations, patchGeneration } from './routes/generate';
@@ -38,11 +39,17 @@ export default {
 
       // ── analyze ──
       if (m === 'POST' && seg[0] === 'analyze' && seg.length === 1) {
+        // §P2 spend guard. Counted here in the router rather than inside the route so the
+        // two paid endpoints share one implementation and neither can forget it.
+        const cap = await countPaidCall(env, operator, 'analyze');
+        if (!cap.allowed) return err('daily_cap', capMessage('analyze', cap), 429, req, env);
         return await analyze(req, env, ctx);
       }
 
       // ── generate ──
       if (m === 'POST' && seg[0] === 'generate' && seg.length === 1) {
+        const cap = await countPaidCall(env, operator, 'generate');
+        if (!cap.allowed) return err('daily_cap', capMessage('generate', cap), 429, req, env);
         return await generate(req, env, ctx);
       }
       // Internal SELF dispatch: one ideation variant per invocation (own CPU budget).

@@ -15,6 +15,11 @@ export interface Env {
    *  text-only virality essay — Pro is reserved for the deep per-shot work. */
   GEMINI_MODEL_FAST: string;
   ALLOWED_ORIGINS: string;
+  /** §P2 spend guards — per-operator daily call caps on the two paid endpoints. Optional:
+   *  absent or unparseable falls back to the defaults in spend.ts (never to zero, which
+   *  would block every paid call). */
+  DAILY_CAP_ANALYZE?: string;
+  DAILY_CAP_GENERATE?: string;
   /** Self service binding (wrangler.toml [[services]]) — /generate fans each ideation
    *  variant out as its OWN worker invocation so each gets its own CPU budget. The
    *  free plan allows only 10ms CPU per invocation; all three variants' JSON+zod+lint

@@ -33,6 +33,7 @@ ROUTE_FILES = [
     "worker/src/routes/coverage.ts",
     "worker/src/routes/insights.ts",
     "worker/src/routes/generate.ts",
+    "worker/src/spend.ts",
 ]
 
 DNA_FIXTURE = """{"hook":{"type":"visual","openingVisual":"x","mechanism":"y"},
@@ -156,6 +157,19 @@ def main() -> int:
         "json_each(json_extract(g.output,'$.nope')) j"
     ).fetchone()
     assert empty == (0,), f"json_each over a missing path should be empty, got {empty}"
+
+    # The spend guard's atomic UPSERT ... RETURNING (0005). A write, so the generic
+    # reads-only extraction skips it — exercised explicitly here instead, twice, to prove
+    # the ON CONFLICT increments rather than erroring on the second call.
+    upsert = ("INSERT INTO api_usage (operator, day, endpoint, calls) VALUES (?, ?, ?, 1) "
+              "ON CONFLICT (operator, day, endpoint) DO UPDATE SET calls = calls + 1 "
+              "RETURNING calls")
+    first = con.execute(upsert, ("khian", "2026-08-28", "analyze")).fetchone()
+    second = con.execute(upsert, ("khian", "2026-08-28", "analyze")).fetchone()
+    assert first == (1,) and second == (2,), f"api_usage upsert wrong: {first} {second}"
+    other = con.execute(upsert, ("niko", "2026-08-28", "analyze")).fetchone()
+    assert other == (1,), f"caps must be per-operator: {other}"
+    print("api_usage upsert increments atomically and is per-operator")
 
     paths = con.execute(
         """SELECT json_extract(dna,'$.hook.type'),
