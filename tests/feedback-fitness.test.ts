@@ -22,13 +22,20 @@ function lcg(seed: number): () => number {
   };
 }
 
-/** Draw n sources `trials` times and count how often each id appears. */
+/** Draw n sources `trials` times and count how often each id appears.
+ *
+ *  ONE rng for the whole loop, deliberately. Re-seeding per trial with lcg(seed + i) looks
+ *  more deterministic but is statistically broken: an LCG's FIRST output moves by only
+ *  1664525/2³² ≈ 0.0004 per seed step, so 400 consecutive seeds sample a ~0.15-wide slice
+ *  of [0,1) instead of the whole range — which silently skews every draw. Consuming one
+ *  stream is still fully deterministic for a given seed. */
 function drawCounts(
   candidates: SurpriseCandidate[], trials: number, seed = 42, n = 3,
 ): Map<string, number> {
+  const rand = lcg(seed);
   const counts = new Map<string, number>();
   for (let i = 0; i < trials; i++) {
-    for (const id of sampleSurpriseSources(candidates, n, new Set(), lcg(seed + i))) {
+    for (const id of sampleSurpriseSources(candidates, n, new Set(), rand)) {
       counts.set(id, (counts.get(id) ?? 0) + 1);
     }
   }

@@ -16,6 +16,7 @@ import { exportBriefs, exportFormat, exportJson } from './routes/export';
 import { deleteProfile, getProfile, listProfiles, putProfile } from './routes/profiles';
 import { getJob } from './routes/jobs';
 import { backfillTaxonomy } from './routes/admin';
+import { synthesisCoverage } from './routes/coverage';
 import { qaBeat } from './routes/qa';
 
 export default {
@@ -113,6 +114,10 @@ export default {
       // ── admin ──
       if (m === 'POST' && seg[0] === 'admin' && seg[1] === 'reindex-fts' && seg.length === 2) {
         return await reindexFts(req, env);
+      }
+      // Phase 4 coverage telemetry — pure SQL aggregation, no Gemini cost, safe to poll.
+      if (m === 'GET' && seg[0] === 'admin' && seg[1] === 'synthesis-coverage' && seg.length === 2) {
+        return await synthesisCoverage(req, env);
       }
       if (m === 'POST' && seg[0] === 'admin' && seg[1] === 'backfill-taxonomy' && seg.length === 2) {
         return await backfillTaxonomy(req, env, ctx);

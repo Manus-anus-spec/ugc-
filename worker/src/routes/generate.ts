@@ -28,7 +28,7 @@ import {
   hardStripNsfwForLlm, planSegments, type LintViolation,
 } from '../generate/rules';
 import { NEUTRAL_PROFILE } from '../generate/neutral';
-import { sampleSurpriseSources } from '../generate/surprise';
+import { EXPLORATION_BONUS_MAX, sampleSurpriseSources } from '../generate/surprise';
 import {
   buildGeneratorInstruction, buildGeneratorRepairPrompt, buildGeneratorUserMessage, buildLintRepairPrompt,
   buildSynthesisDigest, buildSynthesisUserMessage,
@@ -270,6 +270,30 @@ async function selectSurpriseFormatIds(
     console.log(`surprise ${profileId}: fitness prior active on ${feedback.size} format(s) — ${shaped.join(' ')}`);
   }
 
+  // Usage counts for the exploration bonus (Phase 4). Only 31 of 169 formats had ever been
+  // fused; score²-weighting alone cannot reach the tail, so a never-drawn format gets a
+  // bounded lift. Same two-ways-in accounting as the fitness query above.
+  const usage = await env.DB.prepare(
+    `WITH used AS (
+       SELECT j.value AS format_id, 'fused' AS how
+         FROM generations g, json_each(json_extract(g.output, '$.sourceFormatIds')) j
+       UNION ALL
+       SELECT g.format_id AS format_id, 'subject' AS how
+         FROM generations g
+        WHERE json_extract(g.output, '$.sourceFormatIds') IS NULL
+     )
+     SELECT format_id,
+            SUM(CASE WHEN how = 'fused'   THEN 1 ELSE 0 END) AS times_fused,
+            SUM(CASE WHEN how = 'subject' THEN 1 ELSE 0 END) AS times_subject
+       FROM used GROUP BY format_id`,
+  ).all<{ format_id: string; times_fused: number; times_subject: number }>();
+  const usageBy = new Map(usage.results.map((r) => [r.format_id, r]));
+  const neverUsed = results.filter((r) => !usageBy.has(r.id)).length;
+  console.log(
+    `surprise ${profileId}: coverage ${results.length - neverUsed}/${results.length} used — ` +
+    `exploration bonus ×${EXPLORATION_BONUS_MAX} on ${neverUsed} never-drawn format(s)`,
+  );
+
   const menu = formatMenu && formatMenu.length > 0 ? new Set(formatMenu) : undefined;
   if (menu) {
     // Persona lane bias — log the split, never silently drop (types stay drawable at ×0.15).
@@ -280,6 +304,8 @@ async function selectSurpriseFormatIds(
     results.map((r) => ({
       id: r.id, formatType: r.format_type, score: r.virality_score,
       ...feedback.get(r.id),   // absent = never judged = neutral fitness 0.5
+      timesFused: usageBy.get(r.id)?.times_fused ?? 0,
+      timesSubject: usageBy.get(r.id)?.times_subject ?? 0,
     })), n, exclude,
     Math.random, menu,
   );

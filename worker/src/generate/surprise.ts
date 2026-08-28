@@ -22,6 +22,9 @@ export type SurpriseCandidate = {
   /** Operator feedback counts for this format (Phase 3). Absent = never judged. */
   ups?: number;
   downs?: number;
+  /** Usage counts (Phase 4) driving the exploration bonus. Absent = never used. */
+  timesFused?: number;
+  timesSubject?: number;
 };
 
 /** Laplace/Beta-smoothed success rate — the fusion-quality prior (Phase 3, brief §P1.1).
@@ -47,6 +50,33 @@ export function fitness(ups = 0, downs = 0, beta: number = FITNESS_BETA): number
   return (u + beta) / (u + d + 2 * beta);
 }
 
+/** Exploration bonus for the untouched tail (Phase 4, brief §P1.2).
+ *
+ *  Measured 2026-08-28: only 31 of 169 formats had ever been fused. score²-weighting alone
+ *  cannot fix that — a 45-scoring format is ~4× less likely per draw than a 90-scoring one,
+ *  so the low-scoring tail never gets sampled and never gets a chance to prove itself. The
+ *  library is the asset and 82% of it was inert.
+ *
+ *  So a format that has NEVER been drawn gets a bounded multiplier, decaying to 1.0 as soon
+ *  as it has been used:
+ *      timesUsed 0 → ×EXPLORATION_BONUS_MAX
+ *      timesUsed 1 → halfway back
+ *      timesUsed ≥2 → ×1.0 (no bonus; it has had its shot)
+ *
+ *  BOUNDED ON PURPOSE. At ×2.5 the bonus is worth roughly the difference between a 57- and
+ *  a 90-scoring format (90²/57² ≈ 2.5), so an untouched format competes with the top of the
+ *  library WITHOUT displacing it — quality still leads. An unbounded or score-ignoring
+ *  bonus would just invert the problem and start fusing the library's worst material.
+ */
+export const EXPLORATION_BONUS_MAX = 2.5;
+
+export function explorationBonus(timesFused = 0, timesSubject = 0): number {
+  const used = Math.max(0, timesFused) + Math.max(0, timesSubject);
+  if (used === 0) return EXPLORATION_BONUS_MAX;
+  if (used === 1) return 1 + (EXPLORATION_BONUS_MAX - 1) / 2;
+  return 1;
+}
+
 /** Persona lane bias (Content Persona Framework, 2026-08-17): when the profile has a
  *  contentPersona.formatMenu, off-menu archetypes are down-weighted ×0.15 — they can
  *  still contribute a MECHANISM to a fusion occasionally (mechanisms are theme-neutral;
@@ -67,12 +97,22 @@ export function sampleSurpriseSources(
 
   const laneBias = (c: SurpriseCandidate) =>
     menu && menu.size > 0 ? (menu.has(c.formatType ?? '?') ? 1 : OFF_MENU_WEIGHT) : 1;
-  // score² × fitness × laneBias (Phase 3). Quality still leads the draw; the feedback
-  // prior nudges it. An unjudged format scores fitness 0.5, so introducing the prior
-  // rescales every weight uniformly and — on its own — changes NO relative probability;
-  // only actual thumbs move a format relative to its peers.
+  // score² × fitness × exploration × laneBias.
+  //
+  // Phase 3 (fitness): quality still leads the draw; the feedback prior nudges it. An
+  // unjudged format scores fitness 0.5, so introducing the prior rescales every weight
+  // uniformly and — on its own — changes NO relative probability; only actual thumbs move
+  // a format relative to its peers.
+  //
+  // Phase 4 (exploration): a never-drawn format gets a bounded lift so the 82% tail can
+  // enter the draw at all. Ordering matters conceptually — exploration decides who gets a
+  // FIRST look, fitness decides who keeps getting looks. A brand-new format is boosted;
+  // once it has been used twice its bonus is gone and only its record speaks for it.
   const weight = (c: SurpriseCandidate) =>
-    Math.max(1, c.score) ** 2 * fitness(c.ups, c.downs) * laneBias(c);
+    Math.max(1, c.score) ** 2
+    * fitness(c.ups, c.downs)
+    * explorationBonus(c.timesFused, c.timesSubject)
+    * laneBias(c);
   const picked: SurpriseCandidate[] = [];
   const seenType = new Set<string>();
   while (picked.length < n && pool.length > 0) {
