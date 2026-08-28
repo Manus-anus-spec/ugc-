@@ -33,6 +33,13 @@ jobs:
           node-version: '22'
           cache: npm
 
+      # `npm test` includes test:sql (scripts/sql-check.py), which executes the worker's
+      # hand-written SQL against real SQLite. Stdlib only — this just pins the interpreter
+      # rather than trusting whatever the runner image ships.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       # `npm ci` (not `npm install`) so the lockfile is authoritative and a drifted
       # transitive dep fails loudly here instead of silently changing behaviour.
       - name: Install dependencies
