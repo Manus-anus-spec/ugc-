@@ -98,11 +98,38 @@ export function lintMotionPrompt(
   // the NB check and the emit-time translation can never drift out of agreement.
   flagTell(PORTRAIT_FRAMING_TERM,
     (w) => `portrait-framing term "${w}" — use environmental anti-portrait framing (subject ~35-45%, room visible, off-center), never "${w}"`);
-  // "stare/staring AT" (the bystander freeze tell) — NOT the noun "a heavy-lidded stare" (legit house style). Verb+object only.
-  flagTell(/\b(stands? (?:completely )?frozen|holds? still|maintains eye contact|stares? at|staring at)\b/i,
-    (w) => `freeze-word "${w}" causes a dead frame — keep her moving ("glances toward… then her attention drifts")`);
-  flagTell(/\b(pure disgust|confident smirk|feigned innocen\w+|intense pleasure|eyes rolling back|exaggerated bliss)\b/i,
-    (w) => `over-directed expression label "${w}" — describe what she is reacting to and let the expression emerge, do not name it`);
+  // ── Law 2, freeze language (Phase 5: closing the instruction/enforcement gap) ──
+  // prompt.ts law 2 bans "pauses", "holds the expression/pose", "freeze" and "motionless"
+  // as well, but the lint only ever caught the first five terms — so the instruction was
+  // stricter than the enforcement and the extra terms shipped whenever the LLM ignored it.
+  //
+  // Two deliberate NON-additions, because the instruction's own good example uses them:
+  //   • "holds the look for a moment, still blinking and breathing, then her eyes drift" is
+  //     the house-APPROVED continuation pattern for a held beat (law 2), so "holds the look"
+  //     must stay legal. Only the explicitly-named "holds the expression/pose" is flagged.
+  //   • bare "pauses" would catch "the music pauses" / "the track pauses", which is audio,
+  //     not a dead frame. Scoped to the subject pausing.
+  // "stare/staring AT" stays verb+object only — the noun "a heavy-lidded stare" is legit
+  // house style for the thirst lane and must not trip.
+  flagTell(
+    /\b(stands? (?:completely )?frozen|holds? still|maintains eye contact|stares? at|staring at|motionless|perfectly still|freezes? in place|holds? the (?:expression|pose)|(?:she|he|her|his) pauses|pausing (?:for|briefly))\b/i,
+    (w) => `freeze-word "${w}" causes a dead frame — keep her moving ("glances toward… then her attention drifts"), or give a held beat a continuation ("holds the look, still blinking, then her eyes drift")`,
+  );
+  // ── Law 1, named expressions ──
+  // Same gap: the instruction bans NAMING any expression, the lint knew six labels. Added
+  // patterns are all explicit emotion-NAMING constructions, which is what law 1 actually
+  // prohibits — deliberately NOT banning evocative-but-physical writing ("her face opens
+  // up", "a heavy-lidded gaze"), which is the house style the laws are trying to produce.
+  flagTell(
+    /\b(pure (?:disgust|joy|bliss|shock)|confident smirk|feigned innocen\w+|intense pleasure|eyes rolling back|exaggerated bliss|shocked (?:face|expression|look)|makes? an? \w+ face|look of (?:shock|disgust|surprise|horror|desire)|expression of \w+)\b/i,
+    (w) => `over-directed expression label "${w}" — describe what she is reacting to and let the expression emerge and develop, do not name it`,
+  );
+  // ── Law 9, the "identical composition" clause ──
+  // Law 9 ends "never 'exact/identical composition'" and nothing enforced it. Unambiguous
+  // and zero false-positive risk: these phrases flatten a shot into a portrait, which is
+  // the same failure item 6 exists to prevent.
+  flagTell(/\b(identical composition|exact composition|same composition|exact framing|identical framing)\b/i,
+    (w) => `"${w}" flattens the shot into a portrait — describe RELATIVE layout instead (camera height, distance, subject position in frame, headroom, background landmarks)`);
   // Self-contained rule applies ONLY to on-camera speech; voiceover scripts live in
   // the dialogue field alone and must NOT appear in the motion prompt.
   if (hasDialogue && !normalize(prompt).includes(normalize(dialogue!))) {
