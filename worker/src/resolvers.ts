@@ -6,6 +6,7 @@
  */
 import type { Platform } from '../../shared/contract';
 import { detectPlatform } from '../../shared/platform';
+import { assertSafeFetchTarget, MAX_VIDEO_BYTES, readCappedBody } from './limits';
 
 export class ResolverError extends Error {
   constructor(message: string, public readonly status: number = 400) {
@@ -87,11 +88,19 @@ export async function resolveVideoUrl(u: string, rapidApiKey: string | undefined
   }
 }
 
-/** Download the resolved video into memory for the Gemini File API. */
+/** Download the resolved video into memory for the Gemini File API.
+ *
+ *  The URL here is NOT caller-supplied — it comes back from a platform API or an HTML
+ *  scrape (the caller's own URL is already gated by detectPlatform's hostname match). Both
+ *  guards target that: assertSafeFetchTarget refuses a non-http(s) or internal-address
+ *  target in case an upstream response is hostile or compromised, and readCappedBody stops
+ *  an unbounded download from OOMing the isolate (~128MB) and from being uploaded to the
+ *  billable Gemini File API. Previously this was a bare, unlimited res.arrayBuffer(). */
 export async function fetchVideo(directUrl: string): Promise<{ buffer: ArrayBuffer; mimeType: string }> {
+  assertSafeFetchTarget(directUrl);
   const res = await fetch(directUrl, { headers: { 'User-Agent': UA_BOT } });
   if (!res.ok) throw new ResolverError(`Failed to fetch resolved video: HTTP ${res.status}`, 502);
   const ct = res.headers.get('content-type') || '';
   const mimeType = ct.includes('video/') ? ct.split(';')[0]!.trim() : 'video/mp4';
-  return { buffer: await res.arrayBuffer(), mimeType };
+  return { buffer: await readCappedBody(res, MAX_VIDEO_BYTES, 'Resolved video'), mimeType };
 }

@@ -33,6 +33,7 @@ import { API_VERSION, type Env } from '../env';
 import { err, json, newId, nowIso } from '../http';
 import { formatInsertStatements } from '../db';
 import { ResolverError, fetchVideo, resolveVideoUrl } from '../resolvers';
+import { LimitError, assertUploadWithinCap } from '../limits';
 import {
   callGeminiJson, deleteGeminiFile, extractJson, fitVideoSampling, geminiKeys, secs,
   uploadToGemini, withGeminiKeyFailover, type GeminiFile, type GeminiPart, type MediaResolution,
@@ -146,6 +147,11 @@ export async function analyze(req: Request, env: Env, ctx: ExecutionContext): Pr
       }
     } else if (videoFile instanceof File) {
       const mimeType = videoFile.type || 'video/mp4';
+      // §P2: cap the upload BEFORE reading it into memory or paying to upload it. Until now
+      // only DURATION was gated and Cloudflare's 100MB request limit was the sole backstop —
+      // which fails as an opaque platform error rather than an actionable message, and only
+      // after the bytes have already crossed the wire.
+      assertUploadWithinCap(videoFile.size);
       const { file: uploaded, apiKey } = await uploadWithFailover(env, await videoFile.arrayBuffer(), mimeType);
       src = {
         parts: [{ fileData: { mimeType, fileUri: uploaded.uri } }],
@@ -156,6 +162,9 @@ export async function analyze(req: Request, env: Env, ctx: ExecutionContext): Pr
     }
   } catch (e) {
     if (e instanceof ResolverError) return err('resolve_failed', e.message, e.status, req, env);
+    // Byte-cap rejections carry their own status (413) and an actionable message — without
+    // this they would surface as an opaque 500 on a paid endpoint.
+    if (e instanceof LimitError) return err(e.code, e.message, e.status, req, env);
     throw e;
   }
 

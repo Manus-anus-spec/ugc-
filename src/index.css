@@ -1,3 +1,8 @@
+/* Font @import FIRST: CSS requires @import rules to precede all others, and the
+ * tailwindcss import below expands into rules — leaving this after it produced a
+ * real "@import rules must precede all rules" warning on every build. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 /* Tailwind's source scan is BOUNDED to src/ (2026-08-28).
  *
  * Tailwind v4 auto-detects sources by walking the project for any non-ignored file, which
@@ -13,7 +18,6 @@
  * NOTE: `source(...)` must ride the @import. A standalone `@source "./"` rule is ADDITIVE
  * and leaves the repo-wide auto-scan in place — verified: the stray rule survived it. */
 @import "tailwindcss" source("./");
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 /* ── Design system v2: "creative charge" · deep indigo-black canvas, electric accents
      (Power Orange → Hot Magenta → Electric Violet), motion that rewards action.
