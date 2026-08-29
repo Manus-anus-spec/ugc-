@@ -159,6 +159,19 @@ A6. SHARING IS SELFISH — MAKE THE SHARER LOOK GOOD. sharerPayoff = why posting
 
 A7. FAMILIARITY BEATS ORIGINALITY. A recognizable format re-aimed at a fresh subject outperforms an invented one — the format is the vehicle, the subject is the cargo. Reinvent the SURFACE, keep the proven mechanism. Do not chase novelty for its own sake; novelty that nobody recognizes has to earn attention from zero.
 
+# THE TRANSPLANT LAW (fill transplantPlan on EVERY ideation — this is the line between reusing and copying)
+STEAL THE MECHANISM, INVENT THE SURFACE. You are given blueprints of videos that already worked. Take the ENGINE — the reason attention was held — and build a genuinely new video on top of it. Never rebuild the original's surface.
+
+T1. mechanismTaken — the proven mechanism you are borrowing, stated ABSTRACTLY: "the payoff is withheld until the final half-second", "an authority figure is undercut by a child". If your sentence names a specific prop, brand, person or location, you have described the surface, not the mechanism — go up one level and try again.
+
+T2. surfaceInvented — the subject, setting, props, dialogue and payoff you are building FRESH for this creator. This is the part that must not resemble the source. If the source is a girl reviewing ramen and your idea is a girl reviewing pasta, that is a re-skin and it fails this test: same surface, swapped noun. Change the SITUATION, not the noun.
+
+T3. leftBehind — what you deliberately did NOT take because it was unrepeatable: the original creator's existing audience, their real pet or child, a location nobody else has, a trend window that has closed, plain luck. If the source DNA carries viralMechanics.nonReplicable, treat that list as binding — those are the things that cannot travel, and reaching for one is how a remake fails quietly.
+
+T4. whyNotACopy — one honest line: why someone who saw the original would not call this a copy. If you cannot write that line convincingly, the idea is not different enough. Change it rather than defend it.
+
+WHERE TO AIM: if the source DNA carries viralMechanics.freshAngles, those are directions the mechanism supports that the original never explored — the best starting points for a genuinely new video. Prefer them over re-treading the source's own territory.
+
 # HUMANIZATION LAWS (make every motionPrompt read HUMAN — friend-filmed, not AI-directed)
 These are non-negotiable. A prompt that violates them reads as AI slop no matter how good the idea is.
 1. REACTION, NOT PRESCRIPTION. Never name an expression ("pure disgust", "confident smirk", "intense pleasure", "eyes rolling back", "feigned innocence"). Instead describe what she is REACTING TO and let the feeling emerge; expressions DEVELOP across the beat, they never instant-swap. Write "she catches him looking and her face shifts" — not "she makes a shocked face".
@@ -243,6 +256,7 @@ export function buildSynthesisDigest(dnas: import('../../../shared/contract').Fo
   return dnas.map((d, i) => {
     const wiw = d.whyItWorks;
     const v = d.virality;
+    const vm = d.viralMechanics;
     return [
       `SOURCE ${i + 1} — "${d.title ?? 'untitled'}" [${d.formatType ?? d.archetype ?? 'other'}]${v?.overall != null ? ` (virality ${Math.round(v.overall)})` : ''}`,
       `  hook: ${d.hook?.type ?? '?'} — ${d.hook?.mechanism ?? d.hook?.openingVisual ?? '?'}`,
@@ -251,6 +265,14 @@ export function buildSynthesisDigest(dnas: import('../../../shared/contract').Fo
       `  beat structure: ${d.beats?.length ?? '?'} beats, ${d.pacing?.rhythm ?? d.pacing?.energy ?? 'rhythm n/a'}`,
       v?.strengths?.length ? `  what made it viral: ${v.strengths.join('; ')}` : '',
       wiw?.targetViewer ? `  target viewer: ${wiw.targetViewer}` : '',
+      // The dissection is the most useful thing in a digest whose entire job is "give me
+      // the mechanism, not the video" — replicableCore says what may travel, nonReplicable
+      // says what must be left behind, and freshAngles points somewhere the source never
+      // went. Without these the fusion has to infer transplantability from a plot summary.
+      vm?.primaryDriver ? `  PRIMARY DRIVER (the one thing that made it work): ${vm.primaryDriver}` : '',
+      vm?.replicableCore?.length ? `  TRANSPLANTABLE (reuse these): ${vm.replicableCore.join('; ')}` : '',
+      vm?.nonReplicable?.length ? `  DO NOT REUSE (worked only for the original): ${vm.nonReplicable.join('; ')}` : '',
+      vm?.freshAngles?.length ? `  FRESH ANGLES this mechanism supports: ${vm.freshAngles.join('; ')}` : '',
     ].filter(Boolean).join('\n');
   }).join('\n\n');
 }

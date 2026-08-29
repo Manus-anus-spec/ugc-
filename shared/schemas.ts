@@ -226,6 +226,36 @@ export const ViralityForecastSchema = z.object({
  *  All optional: 169 formats are already stored without them, and per this repo's standing
  *  rule the analyzer is ASKED for fields in the prompt while the schema stays lenient, so a
  *  dropped field can never 502 a paid run. */
+/** BLUEPRINT DISSECTION — what can be STOLEN from this video, and what cannot.
+ *
+ *  The gap this closes: the library recorded, in great detail, WHAT a video did — but never
+ *  separated the part that transplants from the part that only worked once. So "reuse the
+ *  format" and "copy the video" were indistinguishable to the generator, and the safest thing
+ *  it could do was reproduce the surface. That is how you end up a copier instead of a
+ *  trendsetter, and no amount of prompt polish fixes it, because the distinction was never
+ *  captured in the first place.
+ *
+ *  Steal like an artist, made mechanical: take the MECHANISM, invent the SURFACE.
+ *  All optional — 169 formats are already stored without it. */
+export const ViralMechanicsSchema = z.object({
+  /** The ONE thing that actually made it work. If you removed this, it would have died. */
+  primaryDriver: z.string(),
+  /** What TRANSPLANTS to a different creator, niche, product or country. Mechanisms, not
+   *  props: "the reveal is withheld until the last 0.5s" transplants; "she opens a Labubu
+   *  box" does not. */
+  replicableCore: z.array(z.string()),
+  /** What worked ONLY here and cannot be transplanted: this creator's existing fame, a real
+   *  pet or child, a location nobody else has, a moment in a news cycle, a trend that has
+   *  since died, genuine luck. Naming these is what stops the generator copying them. */
+  nonReplicable: z.array(z.string()),
+  /** What BREAKS when the mechanism is moved somewhere else — the failure mode to design
+   *  around, not a disclaimer. */
+  transplantRisk: z.string(),
+  /** NEW directions this mechanism supports that the original never did. The point is a
+   *  fresh video built on a proven engine, not a re-skin of this one. */
+  freshAngles: z.array(z.string()),
+});
+
 export const HookChannelsSchema = z.object({
   /** On-screen text in the first ~2s — the overlay a muted viewer reads. '' = none present. */
   text: z.string().optional(),
@@ -419,6 +449,9 @@ export const FormatDnaSchema = z.object({
       text: z.string(),
     })),
   }).optional(),
+  /** Blueprint dissection (2026-08-29): what transplants vs what only worked once.
+   *  Optional so all 169 stored formats keep parsing; asked for on every new analysis. */
+  viralMechanics: ViralMechanicsSchema.optional(),
   whyItWorks: z.object({            // the teaching layer — the ~80% that must survive ideation
     mechanism: z.string(),          // retention/psychological driver
     retentionDrivers: z.array(z.string()),
@@ -806,6 +839,26 @@ export const AttentionPlanSchema = z.object({
   sharerPayoff: z.string(),   // why POSTING this flatters the person who posts it
 });
 
+/** What this ideation TOOK from the source and what it INVENTED — the trendsetter test,
+ *  made explicit and checkable rather than hoped for.
+ *
+ *  Required of the LLM, optional in storage (139 runs predate it). Forcing the generator to
+ *  name its own borrowed mechanism and its own invented surface is what makes the difference
+ *  between reuse and copying legible: if surfaceInvented is thin, the idea IS a re-skin, and
+ *  that is now visible on the card instead of buried in a prompt. */
+export const TransplantPlanSchema = z.object({
+  /** The proven MECHANISM taken from the source — why it works, stated abstractly. */
+  mechanismTaken: z.string(),
+  /** The surface built fresh for this creator: subject, setting, props, dialogue, payoff.
+   *  This is the part that must NOT resemble the source. */
+  surfaceInvented: z.string(),
+  /** What was deliberately LEFT BEHIND because it was unrepeatable — the source's fame,
+   *  its trend window, its specific person or place. */
+  leftBehind: z.string(),
+  /** One honest line: why a viewer who saw the original would not call this a copy. */
+  whyNotACopy: z.string(),
+});
+
 export const IdeationSchema = z.object({
   index: z.number().int(),          // 0..N within the run
   title: z.string(),                // short name of this angle
@@ -825,6 +878,7 @@ export const IdeationSchema = z.object({
    *  flatters the sharer is a brief that produces slop — and until now nothing forced the
    *  generator to name any of the three. */
   attentionPlan: AttentionPlanSchema.optional(),
+  transplantPlan: TransplantPlanSchema.optional(),
   whyItWorksForProfile: z.string(), // the OG mechanism re-aimed at THIS profile's ICP
   creativeBrief: z.string(),
   videoModel: z.object({ choice: VideoModelChoiceSchema, reason: z.string() }),

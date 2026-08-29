@@ -13,7 +13,7 @@
  */
 import { z } from 'zod';
 import {
-  AttentionPlanSchema, BeatGenerationSchema, CameraAngleSchema, ContinuityLockSchema,
+  AttentionPlanSchema, BeatGenerationSchema, TransplantPlanSchema, CameraAngleSchema, ContinuityLockSchema,
   CutTransitionSchema,
   EditPlanSchema, FidelityModeSchema, FirstFrameSourceSchema, GenerationRunSchema,
   GenerationVerdictPatchSchema, IdeationSchema,
@@ -95,6 +95,7 @@ const LlmIdeationExtension = {
   // the stored IdeationSchema keeps it optional — the standing rule here is that a dropped
   // field must never 502 a paid run, and every run stored before 2026-08-28 lacks it.
   attentionPlan: AttentionPlanSchema,
+  transplantPlan: TransplantPlanSchema,
   virality: ViralityForecastSchema,
   editPlan: EditPlanSchema,
   lipSyncPlan: LipSyncPlanSchema,
