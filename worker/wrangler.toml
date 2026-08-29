@@ -13,8 +13,20 @@ compatibility_date = "2026-07-01"
 
 [vars]
 # Pinned from live ListModels 2026-07-21 (best available Pro; avoid "-latest" aliases — traceability).
-GEMINI_MODEL = "gemini-3.1-pro-preview"
-GEMINI_MODEL_FALLBACK = "gemini-2.5-pro"
+# 2026-08-29: PRIMARY moved off the preview model. gemini-3.1-pro-preview was returning
+# 400 FAILED_PRECONDITION "User location is not supported for the API use." from the
+# Cloudflare colo serving this account, which failed all 3 /generate variants at once.
+# Evidence it is MODEL-scoped, not country-scoped: all 169 library formats were rescored
+# through gemini-2.5-pro from the same egress on 2026-08-28/29, succeeding (with occasional
+# intermittent refusals that the retry ladder now absorbs). GA models carry wider regional
+# availability than previews — which is the whole reason a preview id was a risky primary.
+GEMINI_MODEL = "gemini-2.5-pro"
+# Tier 3 of the generate ladder must be a DIFFERENT, independently-reachable model or it is
+# not a fallback. Flash is GA and has been serving the perception passes from this egress
+# throughout, so it is a real escape hatch rather than a second way to fail.
+GEMINI_MODEL_FALLBACK = "gemini-2.5-flash"
+# Kept so the preview can be flipped back in one edit once Google widens its regions.
+GEMINI_MODEL_PREVIEW = "gemini-3.1-pro-preview"
 # Fast tier for Pass-A boundary scans, micro-passes, and the text-only virality essay.
 # gemini-2.5-flash validated live on this pipeline 2026-07-21 (golden test); swap to a
 # gemini-3.x flash id via var if/when ListModels shows one.

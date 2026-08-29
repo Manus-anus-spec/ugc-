@@ -250,6 +250,10 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
   const [run, setRun] = useState<GenerationRun | null>(null);
   const [picked, setPicked] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // The server's per-variant failure list. Previously discarded, which is why diagnosing the
+  // 2026-08-29 geo outage needed a curl: the UI said "usually transient" while the detail
+  // array held the actual Gemini rejection three times over.
+  const [errorDetail, setErrorDetail] = useState<string[]>([]);
   const [history, setHistory] = useState<{ id: string; profileId: string; variationStrength: string; createdAt: string }[]>([]);
 
   useEffect(() => {
@@ -265,7 +269,7 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
   useEffect(() => { if (presetFormatId) setFormatId(presetFormatId); }, [presetFormatId]);
 
   const runWith = async (fn: () => Promise<GenerationRun>) => {
-    setRunning(true); setError(null); setRun(null); setElapsed(0);
+    setRunning(true); setError(null); setErrorDetail([]); setRun(null); setElapsed(0);
     const t0 = Date.now();
     const timer = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
     try {
@@ -274,6 +278,9 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
       setPicked(0);
     } catch (e) {
       setError(e instanceof ApiRequestError ? `${e.api.code}: ${e.api.error}` : String(e));
+      // detail is typed `unknown` on ApiError — narrow it rather than trusting the shape.
+      const d = e instanceof ApiRequestError ? e.api.detail : undefined;
+      setErrorDetail(Array.isArray(d) ? d.map((x) => String(x)) : d ? [String(d)] : []);
     } finally {
       clearInterval(timer);
       setRunning(false);
@@ -390,7 +397,21 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
 
       {error && (
         <div className="bg-surface border border-nsfw/40 rounded-xl p-6 space-y-2">
-          <div className="flex items-center gap-2 text-nsfw"><XCircle size={16} /><span className="font-mono text-xs">{error}</span></div>
+          <div className="flex items-start gap-2 text-nsfw"><XCircle size={16} className="shrink-0 mt-0.5" /><span className="font-mono text-xs">{error}</span></div>
+          {errorDetail.length > 0 && (
+            <details className="text-left" open={errorDetail.length <= 3}>
+              <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-wider text-dim hover:text-cream">
+                {errorDetail.length} failure detail{errorDetail.length > 1 ? 's' : ''} from the server
+              </summary>
+              <ul className="mt-2 space-y-1">
+                {errorDetail.map((d, i) => (
+                  <li key={i} className="font-mono text-[11px] text-dim leading-snug break-words bg-raised border border-hairline rounded p-2">
+                    {d}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           <button onClick={() => void start()} className="inline-flex items-center gap-2 border border-hairline rounded-md px-3 py-1.5 text-sm text-dim hover:text-cream cursor-pointer">
             <RotateCcw size={13} /> retry
           </button>

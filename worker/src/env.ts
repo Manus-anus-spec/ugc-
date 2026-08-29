@@ -22,6 +22,9 @@ export interface Env {
    *  this score decides which blueprints get reused downstream, so it is the wrong place
    *  to economise. Overridable without a code change. */
   GEMINI_MODEL_SCORER?: string;
+  /** Parked preview model id — not used by any code path; kept in [vars] so the primary
+   *  can be flipped back to it in one edit if Google widens the preview's regions. */
+  GEMINI_MODEL_PREVIEW?: string;
   DAILY_CAP_ANALYZE?: string;
   DAILY_CAP_GENERATE?: string;
   /** Self service binding (wrangler.toml [[services]]) — /generate fans each ideation

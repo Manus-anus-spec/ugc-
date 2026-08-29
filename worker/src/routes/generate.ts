@@ -416,16 +416,37 @@ async function runSingleVariant(
       : []),
   ];
   let raw: string | null = null;
-  for (const attempt of attempts) {
+  let lastError: unknown = null;
+  for (const [tier, attempt] of attempts.entries()) {
     try {
       raw = await attempt();
       break;
     } catch (e) {
-      if (!isInputBlock(e)) throw e;
-      console.warn(`variant ${variant}: input blocked — escalating sanitization tier`);
+      lastError = e;
+      // BUG FIX (2026-08-29): this used to be `if (!isInputBlock(e)) throw e`, which made
+      // tiers 2 and 3 dead code for every error class EXCEPT an input block. The fallback
+      // MODEL lives in tier 3, so a model-scoped failure — precisely the Gemini geo
+      // rejection that returned 0/3 variants — rethrew before the fallback was ever tried.
+      // Now every tier gets its turn and only the LAST error propagates.
+      //
+      // Spend cap is the one terminal case: every tier uses the same keys and
+      // withGeminiKeyFailover has already walked all of them, so continuing just burns
+      // wall-clock on a paid endpoint to arrive at the same answer.
+      if (e instanceof GeminiQuotaError && e.kind === 'spend_cap') throw e;
+      const why = isInputBlock(e) ? 'input blocked'
+        : e instanceof Error ? e.message.replace(/\s+/g, ' ').slice(0, 140) : String(e);
+      console.warn(`variant ${variant}: tier ${tier + 1}/${attempts.length} failed (${why}) — escalating`);
     }
   }
-  if (raw === null) throw new InputBlocked();
+  if (raw === null) {
+    // Preserve the typed errors the route's classifier depends on: a quota/rate-limit
+    // error keeps its own code, an input block still surfaces as gemini_input_blocked,
+    // and anything else propagates verbatim so the detail array names the real cause.
+    if (lastError instanceof GeminiQuotaError) throw lastError;
+    if (isInputBlock(lastError)) throw new InputBlocked();
+    if (lastError) throw lastError;
+    throw new InputBlocked();
+  }
 
   // Repair calls embed the model's own output, which can itself trip the filter —
   // always sanitize what goes back in.
@@ -551,10 +572,19 @@ async function runGeneration(
     if (quota) {
       return err(failureCode(quota)!, quota instanceof Error ? quota.message : String(quota), 503, req, env);
     }
+    // Say WHY, and stop claiming transience we cannot know. The old copy read "retry, this
+    // is usually transient" for every failure — during the 2026-08-29 geo outage that was
+    // actively misleading: all three variants failed deterministically on the same Google
+    // rejection, and the message sent the operator into a retry loop that could not work.
+    // If every variant died the same way, that identical cause IS the error; surface it.
+    const details = failures
+      .map((f) => (f instanceof Error ? f.message.replace(/\s+/g, ' ').slice(0, 300) : String(f)))
+      .slice(0, 6);
+    const allSame = details.length > 1 && details.every((d) => d === details[0]);
+    const cause = details[0] ? ` — ${allSame ? 'all variants failed identically' : 'first failure'}: ${details[0]}` : '';
     return err('generation_invalid',
-      `only ${good.length}/${IDEATION_COUNT} ideation variants survived (need ≥2) — retry, this is usually transient`,
-      502, req, env,
-      failures.map((f) => (f instanceof Error ? f.message.slice(0, 300) : String(f))).slice(0, 6));
+      `only ${good.length}/${IDEATION_COUNT} ideation variants survived (need ≥2)${cause}`,
+      502, req, env, details);
   }
   if (good.length < IDEATION_COUNT) {
     console.warn(`generate: proceeding with ${good.length}/${IDEATION_COUNT} ideations (failed: ${failures.map((f) => f instanceof Error ? f.message.slice(0, 120) : f).join(' | ')})`);
