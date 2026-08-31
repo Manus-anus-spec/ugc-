@@ -187,14 +187,60 @@ export function buildSamplingPreamble(fps: number, durationSec?: number): string
 }
 
 /** Grounds the main perception call in the Pass-A vote so beat timings are measured, not invented. */
-export function buildCutMapGrounding(cuts: number[], windows: { startSec: number; endSec: number }[]): string {
-  const cutsTxt = cuts.length ? cuts.map((c) => c.toFixed(2)).join(', ') : '(none — this is a one-shot)';
+export function buildCutMapGrounding(
+  cuts: number[], windows: { startSec: number; endSec: number }[],
+  cutSource: 'estimated' | 'measured' = 'estimated',
+): string {
+  const measured = cutSource === 'measured';
+  // Measured cuts get 3dp and stronger language. The distinction is not cosmetic: an
+  // estimated map is the best guess of another sampled pass and the model may reasonably
+  // disagree with it; a measured map came from frame-exact local decoding and it may not.
+  const cutsTxt = cuts.length
+    ? cuts.map((c) => c.toFixed(measured ? 3 : 2)).join(', ')
+    : '(none — this is a one-shot)';
   const winTxt = windows.length
     ? windows.map((w) => `${w.startSec.toFixed(2)}-${w.endSec.toFixed(2)}s`).join(', ')
     : '(none flagged)';
-  return `GROUND-TRUTH CUT MAP (measured by a dedicated boundary scan — treat as fact):
-- cuts at: [${cutsTxt}] seconds. A new clipIndex begins at every listed cut; do NOT invent cuts that are not listed; cut-adjacent beat boundaries snap to these times.
+  const header = measured
+    ? `GROUND-TRUTH CUT MAP (FRAME-EXACT, decoded locally from the file — these are FACTS, not estimates):
+- cuts at: [${cutsTxt}] seconds. These times are correct to the frame. Your beat boundaries MUST equal them — do not round them, shift them, or "improve" them. You are describing what happens INSIDE these boundaries; you do not get to move them. Do NOT invent any cut that is not listed.`
+    : `GROUND-TRUTH CUT MAP (measured by a dedicated boundary scan — treat as fact):
+- cuts at: [${cutsTxt}] seconds. A new clipIndex begins at every listed cut; do NOT invent cuts that are not listed; cut-adjacent beat boundaries snap to these times.`;
+  return `${header}
 - high-interest motion windows: ${winTxt} — give these beats their most precise motionBeat/secondaryMotion detail.`;
+}
+
+/** Grounding for a client-supplied transcript.
+ *
+ *  TRUST IS NOT UNIFORM. Cuts from ffmpeg are a measurement. A transcript is another model's
+ *  OUTPUT, and on the reference clip faster-whisper produced a fluent Turkish sentence for a
+ *  video with no speech at all. So: 'high' is authoritative, 'low' is a hint the model may
+ *  overrule from what it actually hears, and 'no_speech' is the most valuable value of the
+ *  three — an explicit instruction that there is nothing to transcribe, which is what stops
+ *  the analyzer inventing dialogue to fill a field. */
+export function buildTranscriptGrounding(
+  transcript: { start: number; end: number; text: string; confidence?: number }[] | undefined,
+  confidence: 'high' | 'low' | 'no_speech' | undefined,
+): string {
+  if (confidence === 'no_speech') {
+    return `AUDIO GROUND TRUTH: this clip contains NO SPEECH (verified by a transcription pass on the audio track).
+- Leave every beat's dialogue EMPTY. Do not transcribe, paraphrase or invent a single spoken word.
+- Describe the audio as what it actually is — music bed, ambient, room tone, silence.
+- If you believe you can hear speech, record that disagreement in "uncertain" rather than writing dialogue.`;
+  }
+  if (!transcript?.length) return '';
+  const lines = transcript
+    .map((t) => `  ${t.start.toFixed(2)}-${t.end.toFixed(2)}s: "${t.text.replace(/"/g, "'")}"`)
+    .join('\n');
+  if (confidence === 'high') {
+    return `AUDIO GROUND TRUTH — VERBATIM TRANSCRIPT (timestamped, treat as authoritative):
+${lines}
+- Use these lines VERBATIM as the dialogue for the beats they fall inside. Do not paraphrase, extend, or invent additional speech.
+- Assign each line to the beat whose time window contains its start.`;
+  }
+  return `AUDIO REFERENCE — LOW-CONFIDENCE TRANSCRIPT (a hint, NOT authoritative):
+${lines}
+- Prefer what you can actually hear. If a line looks like a transcription artefact — a language that does not match the video, a stock phrase like "thanks for watching" over a music-only clip — DISREGARD it and note the disagreement in "uncertain".`;
 }
 
 /** Part H — the render loopback: run the vision model as an AI-TELL DETECTOR over a

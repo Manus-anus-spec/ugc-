@@ -25,7 +25,7 @@
 import { z } from 'zod';
 import {
   AnalyzerBeatSchema, AnalyzerOutputSchema, BoundaryMapSchema, MotionWindowDetailSchema,
-  PerceptionOutputSchema, RUBRIC_VERSION, ViralityScorecardSchema,
+  GroundTruthSchema, PerceptionOutputSchema, RUBRIC_VERSION, ViralityScorecardSchema,
 } from '../../../shared/schemas';
 import type { AnalyzeResponse, FormatDna, PerceptionOutput, Platform, ViralityScorecard } from '../../../shared/contract';
 import { ANALYZE_FIELDS } from '../../../shared/fields';
@@ -41,6 +41,7 @@ import {
 import {
   ANALYZER_SYSTEM_INSTRUCTION, BOUNDARY_SYSTEM_INSTRUCTION, CLIP_ANALYST_SYSTEM_INSTRUCTION,
   VIRALITY_SYSTEM_INSTRUCTION, buildCutMapGrounding, buildMotionWindowPrompt, buildRepairPrompt,
+  buildTranscriptGrounding,
   buildSamplingPreamble, buildShotDetailPrompt, buildTimingRepairPrompt,
 } from '../prompt';
 
@@ -124,6 +125,25 @@ export async function analyze(req: Request, env: Env, ctx: ExecutionContext): Pr
   const videoUrl = form.get(ANALYZE_FIELDS.videoUrl);
   const videoFile = form.get(ANALYZE_FIELDS.video);
 
+  // OPTIONAL client-measured ground truth. Malformed input is REJECTED rather than ignored:
+  // silently dropping it would look like the grounding worked while the run stayed
+  // ungrounded, which is the worst of both outcomes.
+  let groundTruth: z.infer<typeof GroundTruthSchema> | undefined;
+  const gtRaw = form.get(ANALYZE_FIELDS.groundTruth);
+  if (typeof gtRaw === 'string' && gtRaw.trim()) {
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(gtRaw);
+    } catch {
+      return err('invalid_ground_truth', `${ANALYZE_FIELDS.groundTruth} must be valid JSON`, 400, req, env);
+    }
+    const gt = GroundTruthSchema.safeParse(parsedJson);
+    if (!gt.success) {
+      return err('invalid_ground_truth', `${ANALYZE_FIELDS.groundTruth} invalid:\n${zodIssuesToText(gt.error)}`, 400, req, env);
+    }
+    groundTruth = gt.data;
+  }
+
   // ── 2. Resolve + upload (we need the duration before choosing sync vs async) ──
   let src: SourceInfo;
   try {
@@ -182,7 +202,7 @@ export async function analyze(req: Request, env: Env, ctx: ExecutionContext): Pr
 
     ctx.waitUntil((async () => {
       try {
-        const format = await performAnalysis(env, src);
+        const format = await performAnalysis(env, src, groundTruth);
         await env.DB.prepare('UPDATE jobs SET status = ?, result_format_id = ?, updated_at = ? WHERE id = ?')
           .bind('done', format.id, nowIso(), jobId).run();
       } catch (e) {
@@ -200,7 +220,7 @@ export async function analyze(req: Request, env: Env, ctx: ExecutionContext): Pr
   // Sync path — still under waitUntil so a client disconnect can't orphan the run.
   const work = (async (): Promise<Response> => {
     try {
-      const format = await performAnalysis(env, src);
+      const format = await performAnalysis(env, src, groundTruth);
       const body: AnalyzeResponse = { format };
       return json(body, 200, req, env);
     } catch (e) {
@@ -267,6 +287,10 @@ interface BoundaryResult {
   windows: { startSec: number; endSec: number }[];
   fps: number;
   fpsHonored: boolean;
+  /** 'measured' = frame-accurate cuts supplied by the client (ffmpeg). 'estimated' = PASS A
+   *  inferred them from a sampled grid. The distinction drives how hard we snap: an estimate
+   *  gets a tolerance, a measurement gets obeyed. */
+  cutSource: 'estimated' | 'measured';
 }
 
 function voteCuts(a: number[], b: number[], fps: number): number[] {
@@ -298,9 +322,13 @@ function mergeWindows(
 
 async function passABoundaryMap(
   env: Env, src: SourceInfo, keys: string[], onKey: (k: string) => void,
+  motionWindowsOnly = false,
 ): Promise<BoundaryResult | null> {
   const duration = src.durationSec!;
-  const fit = fitVideoSampling(duration, PASS_A_FPS, 'MEDIA_RESOLUTION_LOW', PASS_A_BUDGET_TOKENS);
+  // Cut detection is what needs the high frame rate; locating a motion window does not. When
+  // the caller already has measured cuts, halve the sampling and halve the token cost.
+  const fps = motionWindowsOnly ? Math.max(2, Math.round(PASS_A_FPS / 2)) : PASS_A_FPS;
+  const fit = fitVideoSampling(duration, fps, 'MEDIA_RESOLUTION_LOW', PASS_A_BUDGET_TOKENS);
   const model = env.GEMINI_MODEL_FAST || env.GEMINI_MODEL;
   const doCall = (apiKey: string) => callGeminiJson({
     apiKey, model,
@@ -349,7 +377,10 @@ async function passABoundaryMap(
       console.warn(`videoMetadata.fps appears IGNORED by ${model}: promptTokenCount=${ptc}, expected ~${expectedAtRequested} at ${fit.fps}fps. Timing confidence downgraded.`);
     }
 
-    return { cuts: cuts.filter((c) => c > 0.1 && c < duration - 0.1), windows, fps: fit.fps, fpsHonored };
+    return {
+      cuts: cuts.filter((c) => c > 0.1 && c < duration - 0.1),
+      windows, fps: fit.fps, fpsHonored, cutSource: 'estimated',
+    };
   } catch (e) {
     console.warn(`Pass A boundary map failed — degrading to ungrounded perception: ${e instanceof Error ? e.message : e}`);
     return null;
@@ -416,7 +447,15 @@ function normalizeTimings(out: PerceptionOutput, durationSec: number | undefined
         const d = Math.abs(b.startSec - c);
         if (d < bestDist) { bestDist = d; best = i; }
       });
-      if (best > 0 && bestDist <= 0.6) {
+      // The 0.6s guard exists because PASS A's cuts are themselves estimates — snapping a
+      // beat to a wrongly-guessed cut would make things worse. A MEASURED cut has no such
+      // doubt, so it is obeyed regardless of distance.
+      //
+      // This is exactly why the multi-pass never fixed the reported drift: on the measured
+      // test clip the two worst beats were 0.69s and 1.29s off, BOTH outside 0.6, so the
+      // snap silently declined to correct them.
+      const snap = boundary.cutSource === 'measured' ? Infinity : 0.6;
+      if (best > 0 && bestDist <= snap) {
         beats[best]!.startSec = c;
         beats[best - 1]!.endSec = c;
         beats[best]!.startsOnCut = true;
@@ -431,7 +470,11 @@ function normalizeTimings(out: PerceptionOutput, durationSec: number | undefined
 // ─────────────────────────────────────────────────────────────
 
 /** Multi-pass perception → numeric gate → detail merges → virality → D1 save. */
-async function performAnalysis(env: Env, src: SourceInfo): Promise<FormatDna> {
+async function performAnalysis(
+  env: Env, src: SourceInfo,
+  /** OPTIONAL client-measured grounding — frame-accurate cuts and/or a real transcript. */
+  groundTruth?: z.infer<typeof GroundTruthSchema>,
+): Promise<FormatDna> {
   const duration = src.durationSec;
   const shortForm = duration !== undefined && duration <= SHORT_FORM_MAX_SEC;
 
@@ -441,10 +484,35 @@ async function performAnalysis(env: Env, src: SourceInfo): Promise<FormatDna> {
   const keys = src.apiKey ? [src.apiKey] : geminiKeys(env);
   let activeKey = keys[0]!;
 
-  // ── PASS A (short-form only): measured cut map + motion windows ──
-  const boundary = shortForm
-    ? await passABoundaryMap(env, src, keys, (k) => { activeKey = k; })
+  // ── PASS A (short-form only): cut map + motion windows ──
+  //
+  // When the client supplied frame-accurate cuts we still RUN Pass A, but only for its
+  // MOTION WINDOWS, and at reduced fps. This is a deliberate departure from "skip Pass A
+  // entirely": Pass A returns {cuts, windows}, and those windows are what target the MICRO
+  // passes that capture sub-second body motion — the thing this app does that a
+  // stills-plus-transcript tool cannot. Supplied cuts replace the cut LIST; they say nothing
+  // about where the MOTION is, and a long take can hold a big motion beat nowhere near a cut.
+  //
+  // The token saving comes from the fps drop instead: cut DETECTION is what needed ~8fps;
+  // locating a motion window is a coarser job.
+  const gtCuts = groundTruth?.sceneCuts?.filter((c: number) => Number.isFinite(c) && c > 0).sort((a: number, b: number) => a - b);
+  const haveMeasuredCuts = !!gtCuts?.length;
+  let boundary = shortForm
+    ? await passABoundaryMap(env, src, keys, (k) => { activeKey = k; }, haveMeasuredCuts)
     : null;
+  if (haveMeasuredCuts) {
+    // Measured cuts are authoritative. Keep Pass A's windows if we got them; if Pass A
+    // failed outright, the measured cuts alone still ground the run — which is strictly
+    // better than the ungrounded degradation that used to be the only fallback.
+    boundary = {
+      cuts: gtCuts!,
+      windows: boundary?.windows ?? [],
+      fps: boundary?.fps ?? 0,
+      fpsHonored: true,
+      cutSource: 'measured',
+    };
+    console.log(`analyze: using ${gtCuts!.length} client-measured cuts [${gtCuts!.map((c: number) => c.toFixed(3)).join(', ')}]`);
+  }
 
   // ── MAIN perception call: duration-gated sampling, cut-map grounded ──
   let mainFps: number | undefined;
@@ -466,7 +534,8 @@ async function performAnalysis(env: Env, src: SourceInfo): Promise<FormatDna> {
   const mainUserPrompt = [
     ANALYZE_USER_PROMPT,
     mainFps !== undefined ? buildSamplingPreamble(mainFps, duration) : '',
-    boundary ? buildCutMapGrounding(boundary.cuts, boundary.windows) : '',
+    boundary ? buildCutMapGrounding(boundary.cuts, boundary.windows, boundary.cutSource) : '',
+    buildTranscriptGrounding(groundTruth?.transcript, groundTruth?.transcriptConfidence),
   ].filter(Boolean).join('\n\n');
 
   const call = (extraText: string, model: string, parts: GeminiPart[] = mainParts) => callGeminiJson({
@@ -679,6 +748,12 @@ async function performAnalysis(env: Env, src: SourceInfo): Promise<FormatDna> {
       analyzerVersion: `${API_VERSION}/${model}`,
       samplingFps: mainFps ?? 1,
       timingConfidence,
+      // Provenance, so a frame-exact boundary is never silently mixed with a sampled guess,
+      // and a client transcript is never mistaken for something the model observed.
+      ...(boundary ? { cutSource: boundary.cutSource } : {}),
+      transcriptSource: groundTruth?.transcriptConfidence
+        ? (`client_${groundTruth.transcriptConfidence}` as 'client_high' | 'client_low' | 'client_no_speech')
+        : 'none',
     },
   };
 

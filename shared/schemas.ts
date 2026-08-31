@@ -91,6 +91,18 @@ export const SourceMetaSchema = z.object({
    *  when Gemini ignored our fps request or the numeric gate needed a forced repair). */
   samplingFps: z.number().optional(),
   timingConfidence: z.enum(['high', 'medium', 'low']).optional(),
+  /** PROVENANCE OF THE TIMINGS (2026-08-31). 'measured' = the client supplied frame-exact
+   *  cuts (ffmpeg) and the beat boundaries are those cuts. 'estimated' = derived from a
+   *  sampled Pass A. Absent on rows analysed before this existed.
+   *
+   *  This is not decoration. Beat timings drive per-beat prompts and the retention critique's
+   *  timestamps, and a reader has no other way to tell a frame-exact boundary from a ±1s
+   *  guess. Recording it means the two are never silently mixed. */
+  cutSource: z.enum(['estimated', 'measured']).optional(),
+  /** Whether a client-supplied transcript was used, and how far it was trusted. Recorded
+   *  because a transcript is ANOTHER MODEL'S OUTPUT, not an observation — a hallucinated line
+   *  entering the DNA unmarked would become permanent library ground truth. */
+  transcriptSource: z.enum(['none', 'client_high', 'client_low', 'client_no_speech']).optional(),
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -1024,6 +1036,38 @@ export const JobSchema = z.object({
   error: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
+});
+
+/** CLIENT-MEASURED GROUND TRUTH for POST /analyze (2026-08-31).
+ *
+ *  WHY: Gemini samples video at ~1 frame/sec unless told otherwise and, as
+ *  routes/analyze.ts has documented from the start, "INVENTS every sub-second cut and motion
+ *  timing". The multi-pass design fights that and still landed 0.26-1.29s off on a measured
+ *  test clip. ffmpeg measures cuts exactly, locally, in about a second, for zero tokens.
+ *  Paying a model to estimate something a local tool can measure is the wrong trade.
+ *
+ *  Everything here is OPTIONAL. Send nothing and the pipeline behaves exactly as before.
+ *
+ *  A NOTE ON TRUST, which differs per field: cuts from ffmpeg are a MEASUREMENT and are
+ *  treated as authoritative. A transcript is a MODEL OUTPUT from someone else's model and is
+ *  not — on the brief's own test clip, faster-whisper produced a fluent Turkish sentence for
+ *  a music-only video. So a transcript carries a confidence and can be disregarded, and it is
+ *  always marked as client-supplied in the stored DNA rather than passed off as observed. */
+export const GroundTruthSchema = z.object({
+  /** Frame-accurate cut times in seconds, ascending. From ffmpeg scene-detect. */
+  sceneCuts: z.array(z.number()).optional(),
+  durationSec: z.number().optional(),
+  fps: z.number().optional(),
+  dimensions: z.string().optional(),
+  transcript: z.array(z.object({
+    start: z.number(),
+    end: z.number(),
+    text: z.string(),
+    confidence: z.number().optional(),
+  })).optional(),
+  /** 'no_speech' is a MEANINGFUL value, not an absence: it tells the analyzer there is
+   *  nothing to hear, which is what stops it inventing dialogue. */
+  transcriptConfidence: z.enum(['high', 'low', 'no_speech']).optional(),
 });
 
 export const ApiErrorSchema = z.object({
