@@ -254,6 +254,41 @@ export const ViralMechanicsSchema = z.object({
   /** NEW directions this mechanism supports that the original never did. The point is a
    *  fresh video built on a proven engine, not a re-skin of this one. */
   freshAngles: z.array(z.string()),
+
+  /** CAN WE ACTUALLY BUILD IT? (2026-08-31)
+   *
+   *  Deliberately part of viralMechanics rather than a sibling block: "needs a real
+   *  bystander" is already a nonReplicable fact, and two structures describing the same
+   *  thing drift apart (this repo has the scar — a second copy of the virality rubric in
+   *  routes/admin.ts silently undid a recalibration).
+   *
+   *  WHY IT MATTERS MORE THAN IT LOOKS: virality_score drives the surprise sampler as score²,
+   *  so a high score on a format we physically cannot produce does not merely waste
+   *  attention — it OUTCOMPETES formats we can build. A 62-scoring prank needing a prankster,
+   *  an unwitting stranger and a public location will beat a 55-scoring format we could
+   *  actually shoot. That is the same class of error as a miscalibrated score, wearing a
+   *  different hat. */
+  production: z.object({
+    /** How many distinct people must appear. Our models are single AI characters with no
+     *  locked co-star, so anything above 1 is a real constraint, not a detail. */
+    castCount: z.number().int(),
+    castRoles: z.array(z.string()),
+    needsPublicLocation: z.boolean(),
+    needsRealBystanders: z.boolean(),
+    /** Legible on-screen content (a phone screen, a chat, a QR code). i2v models cannot
+     *  render legible text, so these beats need compositing after generation. */
+    screenContentRequired: z.boolean(),
+    /** 0-100: how buildable is this by a SINGLE AI-generated character with no co-star,
+     *  no real bystanders and no real location? Independent of how good the video is. */
+    aiFeasibility: z.number(),
+    aiFeasibilityReason: z.string(),
+    /** THE MOST VALUABLE FIELD HERE. How to get the SAME mechanic with ONE character.
+     *  A rejected format should still leave behind something buildable: "make the model the
+     *  victim — she scans the code herself, filmed by an off-camera friend" collapses a
+     *  two-hander with strangers into a single-character shot. Required, not optional: a
+     *  format we cannot build and cannot rewrite is worth knowing about explicitly. */
+    singleCharacterRewrite: z.string(),
+  }),
 });
 
 export const HookChannelsSchema = z.object({
@@ -452,6 +487,20 @@ export const FormatDnaSchema = z.object({
   /** Blueprint dissection (2026-08-29): what transplants vs what only worked once.
    *  Optional so all 169 stored formats keep parsing; asked for on every new analysis. */
   viralMechanics: ViralMechanicsSchema.optional(),
+  /** WHAT THE ANALYZER COULD NOT DETERMINE (2026-08-31).
+   *
+   *  The output format used to reward a confident answer for every field, and a schema with
+   *  no way to say "I could not see that" applies quiet pressure to invent one. Measured
+   *  case: a transcription pass on a music-only clip produced a fluent Turkish sentence that
+   *  was never spoken. An explicit place to say "unknown" costs nothing and removes the
+   *  pressure — a named gap is far more useful downstream than a confident fabrication,
+   *  because a gap can be checked and a fabrication cannot.
+   *
+   *  Empty array is a legitimate answer for a clean, well-lit, unambiguous clip. */
+  uncertain: z.array(z.object({
+    field: z.string(),        // dotted path, e.g. "beats[2].dialogue"
+    why: z.string(),          // what blocked it: off-screen, too fast, occluded, no audio
+  })).optional(),
   whyItWorks: z.object({            // the teaching layer — the ~80% that must survive ideation
     mechanism: z.string(),          // retention/psychological driver
     retentionDrivers: z.array(z.string()),

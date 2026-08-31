@@ -87,6 +87,21 @@ const fixture = {
     interpolationRisk: 'any frame-interpolated smoothness on the hair swing would betray AI',
   },
   textOverlays: { present: false, cadence: 'none', placement: 'none', copyStyle: 'none', items: [] },
+  viralMechanics: {
+    primaryDriver: 'the freeze withholds the reveal until the unfreeze',
+    replicableCore: ['a promise made in frame one that only resolves at the end'],
+    nonReplicable: ['the mirrored lift interior', 'the creator\'s existing following'],
+    transplantRisk: 'without the mirror the freeze reads as a glitch rather than a choice',
+    freshAngles: ['the same withhold applied to an outfit reveal', 'the same freeze on a doorway'],
+    production: {
+      castCount: 1, castRoles: ['the subject'],
+      needsPublicLocation: false, needsRealBystanders: false, screenContentRequired: false,
+      aiFeasibility: 85,
+      aiFeasibilityReason: 'single character, private interior, no legible screen content',
+      singleCharacterRewrite: 'already single-character — no rewrite needed',
+    },
+  },
+  uncertain: [{ field: 'audio.beatMap[1]', why: 'drop is ambiguous under the music bed' }],
   whyItWorks: {
     mechanism: 'freeze-frame curiosity gap', retentionDrivers: ['await the unfreeze'],
     targetViewer: 'fashion-adjacent scrollers',

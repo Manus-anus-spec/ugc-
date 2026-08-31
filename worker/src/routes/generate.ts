@@ -234,10 +234,12 @@ async function selectSurpriseFormatIds(
   const { results } = await env.DB.prepare(
     // No LIMIT: a top-N cut left 4 whole archetypes (all sub-60 scores) permanently
     // outside the pool. score²-weighting in the sampler is the quality bias instead.
-    `SELECT id, format_type, virality_score FROM formats
+    `SELECT id, format_type, virality_score,
+            json_extract(dna, '$.viralMechanics.production.aiFeasibility') AS ai_feasibility
+       FROM formats
      WHERE schema_version != '0-legacy' AND virality_score IS NOT NULL
      ORDER BY virality_score DESC`,
-  ).all<{ id: string; format_type: string | null; virality_score: number }>();
+  ).all<{ id: string; format_type: string | null; virality_score: number; ai_feasibility: number | null }>();
   // Don't-repeat memory: the exact ids fused by the last 2 surprise-me runs for this profile.
   const recent = await env.DB.prepare(
     `SELECT json_extract(output, '$.sourceFormatIds') AS ids FROM generations
@@ -312,6 +314,9 @@ async function selectSurpriseFormatIds(
       ...feedback.get(r.id),   // absent = never judged = neutral fitness 0.5
       timesFused: usageBy.get(r.id)?.times_fused ?? 0,
       timesSubject: usageBy.get(r.id)?.times_subject ?? 0,
+      // null (never assessed) stays undefined -> neutral weight, so the 169 pre-existing
+      // formats are not penalised for a field that did not exist when they were analysed.
+      ...(r.ai_feasibility !== null ? { aiFeasibility: r.ai_feasibility } : {}),
     })), n, exclude,
     Math.random, menu,
   );

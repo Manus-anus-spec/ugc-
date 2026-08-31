@@ -110,6 +110,48 @@ export async function readCappedBody(
   return out.buffer;
 }
 
+/** Extension → MIME for the container formats Gemini accepts for video. */
+const EXT_MIME: Record<string, string> = {
+  mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm',
+  mkv: 'video/x-matroska', avi: 'video/x-msvideo', mpeg: 'video/mpeg', mpg: 'video/mpeg',
+  '3gp': 'video/3gpp', flv: 'video/x-flv', wmv: 'video/x-ms-wmv',
+};
+
+/** Leading magic bytes → MIME, for when the filename is useless too. */
+const MAGIC: { mime: string; at: number; bytes: number[] }[] = [
+  { mime: 'video/mp4', at: 4, bytes: [0x66, 0x74, 0x79, 0x70] },      // ....ftyp (mp4/mov/3gp)
+  { mime: 'video/webm', at: 0, bytes: [0x1a, 0x45, 0xdf, 0xa3] },     // EBML (webm/mkv)
+  { mime: 'video/x-msvideo', at: 0, bytes: [0x52, 0x49, 0x46, 0x46] },// RIFF (avi)
+];
+
+/**
+ * Decide the MIME type to hand Gemini for an uploaded video.
+ *
+ * WHY THIS EXISTS: `file.type || 'video/mp4'` looks like a safe fallback and is not. A plain
+ * `curl -F "video=@clip.mp4"` sends `application/octet-stream`, which is TRUTHY — so it sailed
+ * past the fallback into Gemini, which rejected it with
+ *   400 "Unsupported MIME type: application/octet-stream"
+ * That is an opaque Google error for what is really a client formatting detail, and it only
+ * worked if the caller happened to know to write `;type=video/mp4`. Requiring callers to
+ * annotate the part correctly is not a real contract.
+ *
+ * Order: trust a declared `video/*` type, else infer from the extension, else sniff the magic
+ * bytes, else fall back to mp4 (by far the most common) rather than failing the upload.
+ */
+export function resolveVideoMime(declaredType: string, filename: string, head?: Uint8Array): string {
+  if (/^video\//i.test(declaredType)) return declaredType.split(';')[0]!.trim().toLowerCase();
+
+  const ext = filename.toLowerCase().match(/\.([a-z0-9]{2,4})$/)?.[1];
+  if (ext && EXT_MIME[ext]) return EXT_MIME[ext];
+
+  if (head && head.length >= 12) {
+    for (const sig of MAGIC) {
+      if (sig.bytes.every((b, i) => head[sig.at + i] === b)) return sig.mime;
+    }
+  }
+  return 'video/mp4';
+}
+
 /** Cap an already-materialised upload (a File/Blob from multipart form data). */
 export function assertUploadWithinCap(size: number, what = 'uploaded video'): void {
   if (size > MAX_VIDEO_BYTES) {

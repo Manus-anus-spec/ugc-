@@ -25,6 +25,8 @@ export type SurpriseCandidate = {
   /** Usage counts (Phase 4) driving the exploration bonus. Absent = never used. */
   timesFused?: number;
   timesSubject?: number;
+  /** 0-100 buildability by a single AI character (2026-08-31). Absent = not yet assessed. */
+  aiFeasibility?: number;
 };
 
 /** Laplace/Beta-smoothed success rate — the fusion-quality prior (Phase 3, brief §P1.1).
@@ -70,6 +72,29 @@ export function fitness(ups = 0, downs = 0, beta: number = FITNESS_BETA): number
  */
 export const EXPLORATION_BONUS_MAX = 2.5;
 
+/** Down-weight formats we cannot physically build (2026-08-31).
+ *
+ *  THE PROBLEM THIS SOLVES: the sampler weights by score², so a 62-scoring street prank that
+ *  needs a prankster, an unwitting stranger and a public location BEATS a 55-scoring format
+ *  we could actually shoot. A high score on an unbuildable format does not merely waste
+ *  attention, it outcompetes buildable material. That is the same class of error as a
+ *  miscalibrated score.
+ *
+ *  ABSENT = 1.0 (fully neutral), which matters: all 169 stored formats predate the
+ *  assessment, and they must not be penalised for a field nobody has filled in yet. Only a
+ *  format that has been ASSESSED and found hard to build is down-weighted.
+ *
+ *  SOFT, like every other weight here. Floors at 0.25 rather than 0 — a format we cannot
+ *  build today may still be worth fusing a MECHANISM out of, and viralMechanics
+ *  .production.singleCharacterRewrite exists precisely to salvage those. Never hard-exclude. */
+export const FEASIBILITY_FLOOR = 0.25;
+
+export function feasibilityWeight(aiFeasibility?: number): number {
+  if (typeof aiFeasibility !== 'number' || Number.isNaN(aiFeasibility)) return 1;
+  const pct = Math.min(100, Math.max(0, aiFeasibility)) / 100;
+  return FEASIBILITY_FLOOR + (1 - FEASIBILITY_FLOOR) * pct;
+}
+
 export function explorationBonus(timesFused = 0, timesSubject = 0): number {
   const used = Math.max(0, timesFused) + Math.max(0, timesSubject);
   if (used === 0) return EXPLORATION_BONUS_MAX;
@@ -108,10 +133,14 @@ export function sampleSurpriseSources(
   // enter the draw at all. Ordering matters conceptually — exploration decides who gets a
   // FIRST look, fitness decides who keeps getting looks. A brand-new format is boosted;
   // once it has been used twice its bonus is gone and only its record speaks for it.
+  // 2026-08-31 (feasibility): buildability is the last multiplier because it is a VETO-ish
+  // signal rather than a preference — a format we cannot shoot should fade regardless of how
+  // well it scores, how loved it is, or how fresh it is.
   const weight = (c: SurpriseCandidate) =>
     Math.max(1, c.score) ** 2
     * fitness(c.ups, c.downs)
     * explorationBonus(c.timesFused, c.timesSubject)
+    * feasibilityWeight(c.aiFeasibility)
     * laneBias(c);
   const picked: SurpriseCandidate[] = [];
   const seenType = new Set<string>();

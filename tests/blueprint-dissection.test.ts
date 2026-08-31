@@ -68,6 +68,19 @@ const MECHANICS = {
   ],
   transplantRisk: 'without an existing audience the first 2s must work harder — the promise has to be legible to a stranger',
   freshAngles: ['the same withhold applied to a purchase decision', 'the same undercut with a pet instead of a person'],
+  // Added 2026-08-31: production feasibility is now part of the dissection, not a sibling
+  // block, because "needs a real bystander" is already a nonReplicable fact and two
+  // structures describing the same thing drift apart.
+  production: {
+    castCount: 2,
+    castRoles: ['the authority figure', 'the child who undercuts them'],
+    needsPublicLocation: false,
+    needsRealBystanders: false,
+    screenContentRequired: false,
+    aiFeasibility: 30,
+    aiFeasibilityReason: 'needs two distinct people on camera; our models are a single character',
+    singleCharacterRewrite: 'the model plays both sides across a cut — she IS the authority and the undercut lands via a text overlay',
+  },
 };
 
 test('a complete viralMechanics validates', () => {
