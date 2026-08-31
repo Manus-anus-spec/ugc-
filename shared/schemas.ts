@@ -345,6 +345,31 @@ export const HookSchema = z.object({
 });
 
 // ── Beat = the atomic unit of the shot list ──
+/** A person in the source video OTHER than the main subject (2026-08-31).
+ *
+ *  The app had no concept of a second person. Yesterday's feasibility work added
+ *  production.castCount, so we now know a video NEEDS two people — but nothing described
+ *  them, so the scene still could not be built. This is the missing half.
+ *
+ *  Why appearance IS described here, when it is deliberately NEVER described for the main
+ *  subject: the subject's identity comes from locked reference images, and describing her in
+ *  text fights those refs (that is what identityLock and stripIdentityDescriptors exist to
+ *  prevent). A second person has no reference image, so text is the only thing the generator
+ *  has to go on. Opposite rules for opposite reasons. */
+export const CastMemberSchema = z.object({
+  /** Stable id used by beat.speaker — 'subject' is reserved for the main character. */
+  id: z.string(),
+  /** cameraman, friend, interviewer, passerby, victim, shop staff… */
+  role: z.string(),
+  /** Full physical description, since no reference image exists for this person. Empty
+   *  string if they are heard but never seen (an off-camera friend filming). */
+  appearance: z.string(),
+  wardrobe: z.string(),
+  /** True when they never appear in frame — the commonest case in real UGC, and it matters
+   *  because an off-camera person needs no visual generation at all, only a voice. */
+  offCamera: z.boolean().optional(),
+});
+
 export const BeatSchema = z.object({
   index: z.number().int(),
   clipIndex: z.number().int(),      // which cut it belongs to (0 for one-shot)
@@ -357,6 +382,14 @@ export const BeatSchema = z.object({
   framing: z.string(),              // "waist-up, subject fills 60%"
   expressionEnergy: z.string(),     // feeling, not facial muscles
   dialogue: z.string().optional(),
+  /** WHO is speaking — 'subject' or a cast[].id. Optional so pre-2026-08-31 rows parse.
+   *  Without it, dialogue in a two-person video is unattributable, and the lip-sync plan
+   *  cannot know whose mouth to animate — it would default to the model even when the line
+   *  belongs to an off-camera friend. */
+  speaker: z.string().optional(),
+  /** How the line is said — tone/energy, not facial muscles. Kept separate from the words
+   *  so the words can be reproduced verbatim while the delivery is re-aimed at our model. */
+  delivery: z.string().optional(),
   onScreenText: z.string().optional(),
   startsOnCut: z.boolean(),
   // v3 filming fidelity — optional so pre-v3 rows keep parsing; REQUIRED on new
@@ -407,6 +440,12 @@ export const PacingSchema = z.object({
   // v3 — optional for pre-v3 rows:
   cutCadenceSec: z.number().optional(),   // MEDIAN seconds between cuts (numeric twin of rhythm)
   payoffSec: z.number().optional(),       // when the hook's promised payoff actually lands
+  /** HOW IT ENDS (2026-08-31). 'abrupt' = cuts mid-action like a casually uploaded clip;
+   *  'resolved' = lands and settles; 'loop' = designed to run back into frame one.
+   *  A CLEAN, resolved ending is one of the most reliable tells that footage was produced
+   *  rather than captured — and nothing recorded this before, so every remake inherited a
+   *  tidy ending by default. */
+  endBehavior: z.enum(['abrupt', 'resolved', 'loop']).optional(),
 });
 
 export const AudioBeatMapEntrySchema = z.object({
@@ -465,6 +504,11 @@ export const FormatDnaSchema = z.object({
     keyProps: z.array(z.string()),
     colorPalette: z.string(),
     mood: z.string(),
+    /** What is happening BEHIND the subject (2026-08-31): independent people, movement,
+     *  activity. The generator's humanization law 8 already DEMANDS a live background, but
+     *  the analyzer never recorded what the source did — so the generator invented one from
+     *  nothing instead of transplanting a pattern that demonstrably worked. */
+    backgroundActivity: z.string().optional(),
   }),
   wardrobeRole: z.object({          // role, never identity
     role: z.string(),               // "athleisure" | "going-out fit" | "work uniform"
@@ -496,6 +540,9 @@ export const FormatDnaSchema = z.object({
       text: z.string(),
     })),
   }).optional(),
+  /** Everyone in the video BESIDES the main subject (2026-08-31). Empty array is the normal
+   *  case for solo UGC and is meaningful: it says "solo", not "not checked". */
+  cast: z.array(CastMemberSchema).optional(),
   /** Blueprint dissection (2026-08-29): what transplants vs what only worked once.
    *  Optional so all 169 stored formats keep parsing; asked for on every new analysis. */
   viralMechanics: ViralMechanicsSchema.optional(),
@@ -773,6 +820,9 @@ export const BeatGenerationSchema = z.object({
   camera: z.string(),
   expression: z.string(),
   dialogue: z.string().optional(),
+  /** 'subject' or a cast id — mirrors BeatSchema.speaker into the generated beat so the
+   *  production route and lip-sync plan know whose line it is. */
+  speaker: z.string().optional(),
   nbPrompt: z.string(),             // NanoBanana first-frame/still prompt (identity-locked)
   chatgpt2Prompt: z.string().optional(),  // alt image tool, when requested
   sdPrompt: z.string(),             // Seedream delta — MANDATORY, never empty (type-enforced)
@@ -940,6 +990,11 @@ export const IdeationSchema = z.object({
    *  generator to name any of the three. */
   attentionPlan: AttentionPlanSchema.optional(),
   transplantPlan: TransplantPlanSchema.optional(),
+  /** Seedance 2.0 structured prompt, DERIVED from this ideation's enforced beats (2026-08-31).
+   *  Server-built, never LLM-written — see worker/src/generate/seedance.ts for why. Stored as
+   *  unknown because its shape is the video tool's contract, not ours, and pinning it here
+   *  would mean a schema migration every time Seedance changes a field name. */
+  seedancePrompt: z.unknown().optional(),
   whyItWorksForProfile: z.string(), // the OG mechanism re-aimed at THIS profile's ICP
   creativeBrief: z.string(),
   videoModel: z.object({ choice: VideoModelChoiceSchema, reason: z.string() }),

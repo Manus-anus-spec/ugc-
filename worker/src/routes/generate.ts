@@ -30,6 +30,7 @@ import {
 } from '../generate/rules';
 import { NEUTRAL_PROFILE } from '../generate/neutral';
 import { EXPLORATION_BONUS_MAX, sampleSurpriseSources } from '../generate/surprise';
+import { buildSeedancePrompt } from '../generate/seedance';
 import {
   buildGeneratorInstruction, buildGeneratorRepairPrompt, buildGeneratorUserMessage, buildLintRepairPrompt,
   buildSynthesisDigest, buildSynthesisUserMessage,
@@ -614,6 +615,18 @@ async function runGeneration(
     createdAt: now,
     generatorVersion: `${API_VERSION}/${env.GEMINI_MODEL}`,
   };
+  // Derived AFTER enforceIdeation, so the JSON inherits every injector and lint guarantee
+  // the prose motionPrompt has. Built here rather than asked of the LLM precisely so the two
+  // representations cannot disagree.
+  for (const ide of run.ideations) {
+    try {
+      ide.seedancePrompt = buildSeedancePrompt(ide, dna, profile);
+    } catch (e) {
+      // A serializer failure must never fail a paid generation — the prose prompts are the
+      // primary output and remain complete without this.
+      console.warn(`seedance prompt build failed for ideation ${ide.index}: ${e instanceof Error ? e.message : e}`);
+    }
+  }
   GenerationRunSchema.parse(run);   // belt-and-braces before persisting
   await env.DB.prepare(
     `INSERT INTO generations (id, format_id, format_version, profile_id, profile_version,

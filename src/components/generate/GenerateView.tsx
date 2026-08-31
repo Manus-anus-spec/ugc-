@@ -225,6 +225,25 @@ function IdeationDetail({ ideation }: { ideation: Ideation }) {
         <KV k="editing" v={ideation.editingNotes} />
       </Section>
 
+      {ideation.seedancePrompt !== undefined && ideation.seedancePrompt !== null && (
+        <Section title="Seedance 2.0 JSON prompt" defaultOpen={false}>
+          <p className="text-[11px] text-dim mb-2 leading-snug">
+            Derived from this ideation&apos;s enforced beats — same guarantees as the prose prompts
+            (body-hold, secondary-motion cap, ambient, negation pair), just in the shape Seedance takes.
+            Paste as-is; attach her reference frame separately.
+          </p>
+          <div className="flex justify-end mb-1">
+            <CopyButton
+              text={JSON.stringify(ideation.seedancePrompt, null, 2)}
+              label="copy JSON"
+            />
+          </div>
+          <pre className="bg-base border border-hairline rounded p-3 overflow-x-auto font-mono text-[10px] leading-relaxed max-h-96">
+            {JSON.stringify(ideation.seedancePrompt, null, 2)}
+          </pre>
+        </Section>
+      )}
+
       <Section title="QA checklist" defaultOpen={false}>
         {(['nbChecks', 'sdChecks', 'videoChecks'] as const).map((key) => (
           <div key={key} className="mb-2">

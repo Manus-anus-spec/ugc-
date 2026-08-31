@@ -67,11 +67,11 @@ const fixture = {
       motionSignature: 'locked-off propped phone at knee height tilted up 15°, zero shake, subject moves through a static frame',
     },
   },
-  setting: { locationType: 'hotel elevator, mirrored', timeOfDay: 'evening', lighting: 'overhead warm LEDs', keyProps: ['mirror'], colorPalette: 'warm gold + black', mood: 'luxe' },
+  setting: { backgroundActivity: 'empty corridor behind her, doors closing', locationType: 'hotel elevator, mirrored', timeOfDay: 'evening', lighting: 'overhead warm LEDs', keyProps: ['mirror'], colorPalette: 'warm gold + black', mood: 'luxe' },
   wardrobeRole: { role: 'going-out fit', garments: ['satin slip dress'], stylingNotes: 'heels, small bag' },
   pacing: {
     totalDurationSec: 8.2, cutCount: 0, isOneShot: true, rhythm: 'single slow take', energy: 'calm-confident',
-    cutCadenceSec: 8.2, payoffSec: 6,
+    cutCadenceSec: 8.2, payoffSec: 6, endBehavior: 'abrupt',
   },
   audio: {
     kind: 'trending_audio', trendingSoundDependent: true,
@@ -87,6 +87,9 @@ const fixture = {
     interpolationRisk: 'any frame-interpolated smoothness on the hair swing would betray AI',
   },
   textOverlays: { present: false, cadence: 'none', placement: 'none', copyStyle: 'none', items: [] },
+  cast: [
+    { id: 'friend', role: 'friend filming', appearance: '', wardrobe: '', offCamera: true },
+  ],
   viralMechanics: {
     primaryDriver: 'the freeze withholds the reveal until the unfreeze',
     replicableCore: ['a promise made in frame one that only resolves at the end'],
