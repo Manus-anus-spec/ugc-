@@ -496,7 +496,11 @@ async function performAnalysis(
   // The token saving comes from the fps drop instead: cut DETECTION is what needed ~8fps;
   // locating a motion window is a coarser job.
   const gtCuts = groundTruth?.sceneCuts?.filter((c: number) => Number.isFinite(c) && c > 0).sort((a: number, b: number) => a - b);
-  const haveMeasuredCuts = !!gtCuts?.length;
+  // Array.isArray, NOT .length. An EMPTY sceneCuts array is a measurement WITH content: it
+  // says "scene-detect ran and this is a single continuous take". Treating it as "not
+  // supplied" would discard the most useful grounding a one-shot can have, and leave Pass A
+  // free to invent cuts in footage that provably has none. Caught testing a real one-shot.
+  const haveMeasuredCuts = Array.isArray(gtCuts);
   let boundary = shortForm
     ? await passABoundaryMap(env, src, keys, (k) => { activeKey = k; }, haveMeasuredCuts)
     : null;
@@ -511,7 +515,9 @@ async function performAnalysis(
       fpsHonored: true,
       cutSource: 'measured',
     };
-    console.log(`analyze: using ${gtCuts!.length} client-measured cuts [${gtCuts!.map((c: number) => c.toFixed(3)).join(', ')}]`);
+    console.log(gtCuts!.length
+      ? `analyze: using ${gtCuts!.length} client-measured cuts [${gtCuts!.map((c: number) => c.toFixed(3)).join(', ')}]`
+      : 'analyze: client measured ZERO cuts — treating as a verified one-shot');
   }
 
   // ── MAIN perception call: duration-gated sampling, cut-map grounded ──
