@@ -86,12 +86,24 @@ test('a full dissection including the production block validates', () => {
   assert.ok(ViralMechanicsSchema.safeParse(PRANK_MECHANICS).success);
 });
 
-test('production is REQUIRED on a new dissection — feasibility is not optional', () => {
+test('production is OPTIONAL in storage — required in the prompt, not the schema', () => {
+  // Corrected 2026-09-01 after this exact assertion caused a live 422. `production` shipped
+  // two days after the rest of viralMechanics, so formats analysed in that window carry
+  // viralMechanics WITHOUT production — and a required field inside an optional parent is
+  // still a breaking change for everything written in between. The standing rule in this repo
+  // is that stored schemas stay lenient and the analyzer is ASKED in the prompt; the
+  // instruction test below is where the requirement is actually enforced.
   const { production: _p, ...withoutProduction } = PRANK_MECHANICS;
-  assert.equal(ViralMechanicsSchema.safeParse(withoutProduction).success, false);
+  assert.ok(
+    ViralMechanicsSchema.safeParse(withoutProduction).success,
+    'a stored row written between the two deploys must still parse',
+  );
 });
 
-test('singleCharacterRewrite is required — a rejected format must still leave something usable', () => {
+test('WHEN production IS present, singleCharacterRewrite is required within it', () => {
+  // The block is optional; a HALF-filled block is not. If the analyzer bothered to assess
+  // feasibility it must say how to build the thing with one character — that field is the
+  // whole point, and omitting it would leave a rejected format with nothing usable.
   const partial = JSON.parse(JSON.stringify(PRANK_MECHANICS)) as typeof PRANK_MECHANICS;
   delete (partial.production as Partial<typeof partial.production>).singleCharacterRewrite;
   assert.equal(ViralMechanicsSchema.safeParse(partial).success, false);

@@ -280,6 +280,13 @@ export const ViralMechanicsSchema = z.object({
    *  an unwitting stranger and a public location will beat a 55-scoring format we could
    *  actually shoot. That is the same class of error as a miscalibrated score, wearing a
    *  different hat. */
+  /** OPTIONAL in storage, REQUIRED in the analyzer prompt — the standing rule in this repo,
+   *  which I broke when first adding this and had to fix on 2026-09-01. `production` shipped
+   *  two days after the rest of viralMechanics, so any format analysed in that window has
+   *  viralMechanics WITHOUT production, and a required nested field made those rows fail
+   *  validation outright. A required field inside an optional parent is still a breaking
+   *  change for anything written in between. The prompt carries a detailed paragraph
+   *  demanding it, which is where the enforcement belongs. */
   production: z.object({
     /** How many distinct people must appear. Our models are single AI characters with no
      *  locked co-star, so anything above 1 is a real constraint, not a detail. */
@@ -300,7 +307,7 @@ export const ViralMechanicsSchema = z.object({
      *  two-hander with strangers into a single-character shot. Required, not optional: a
      *  format we cannot build and cannot rewrite is worth knowing about explicitly. */
     singleCharacterRewrite: z.string(),
-  }),
+  }).optional(),
 });
 
 export const HookChannelsSchema = z.object({

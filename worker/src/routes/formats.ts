@@ -178,13 +178,22 @@ export async function getFormatSeedance(req: Request, env: Env, id: string): Pro
   if (row.schema_version === '0-legacy') {
     return err('legacy_format', 'this row predates structured DNA — re-analyse the video to get a Seedance prompt', 422, req, env);
   }
-  const parsed = FormatDnaSchema.safeParse(JSON.parse(row.dna));
-  if (!parsed.success) {
-    return err('invalid_dna', 'stored DNA failed validation — re-analyse the video', 422, req, env);
-  }
+  // LENIENT ON PURPOSE. This route was originally hard-validating, and it 422'd on a real
+  // stored row — which was correct behaviour for a schema bug on my side, and the wrong
+  // behaviour for this endpoint regardless. GET /formats/:id does not validate either, and
+  // buildSeedancePromptFromDna is written entirely in optional chaining with fallbacks for
+  // every field, so a partially-shaped older row degrades to a usable prompt instead of an
+  // error. Refusing to serve a prompt because one nested field is missing is worse than
+  // serving a prompt with one generic line in it.
+  const raw = JSON.parse(row.dna) as unknown;
+  const parsed = FormatDnaSchema.safeParse(raw);
   return json({
     formatId: id,
-    note: 'Derived from the analysed source. Attach her reference frame separately; the subject is deliberately not described in text so the refs own her identity.',
-    seedancePrompt: buildSeedancePromptFromDna(parsed.data),
+    // Say so when the row is older than the current contract, rather than pretending.
+    schemaComplete: parsed.success,
+    note: parsed.success
+      ? 'Derived from the analysed source. Attach her reference frame separately; the subject is deliberately not described in text so the refs own her identity.'
+      : 'Derived from an older stored analysis — some fields (cast, background activity, end behaviour) predate the current contract and fall back to generic values. Re-analyse the video for a fully specific prompt.',
+    seedancePrompt: buildSeedancePromptFromDna((parsed.success ? parsed.data : raw) as never),
   }, 200, req, env);
 }

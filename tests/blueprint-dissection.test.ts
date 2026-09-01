@@ -87,7 +87,12 @@ test('a complete viralMechanics validates', () => {
   assert.ok(ViralMechanicsSchema.safeParse(MECHANICS).success);
 });
 
-for (const field of Object.keys(MECHANICS)) {
+// `production` is excluded: it shipped two days after the rest of viralMechanics, so rows
+// written in between carry viralMechanics WITHOUT it. Making it required broke those rows in
+// production (a live 422 on 2026-09-01) — a required field inside an optional parent is still
+// a breaking change for anything written in between. Its requirement lives in the analyzer
+// prompt, and tests/feasibility-and-uncertainty.test.ts covers that.
+for (const field of Object.keys(MECHANICS).filter((f) => f !== 'production')) {
   test(`viralMechanics requires ${field}`, () => {
     const partial = { ...MECHANICS } as Record<string, unknown>;
     delete partial[field];
