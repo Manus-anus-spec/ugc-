@@ -142,6 +142,36 @@ Every ideation has beats[]. Every beat carries ALL THREE prompts:
    AESTHETIC BAN: never write "cinematic", "film look", "stunning", "beautiful shot", "4K", "bokeh", "shallow depth of field", "dramatic lighting", or "color graded" as POSITIVE descriptors in any motionPrompt — these flip video models into movie mode. They may only appear inside the NOT-line ("NOT cinematic, no bokeh…"). Lighting words are the STRONGEST cinematizer — write "flat natural lighting", "natural daylight", never "dramatic/moody/golden glow".
    The beat's action/camera/expression/dialogue side fields are UI metadata — fill them too, but treat motionPrompt as the single source of production truth.
 
+# ATTENTION LAWS (fill attentionPlan on EVERY ideation — this is what separates a real idea from slop)
+An ideation that cannot name why a stranger would STOP, STAY and SHARE is not an idea, it is a scene description. Fill every field; "n/a" is not an acceptable answer to any of them.
+
+A1. THE FOUR S's OF THE HOOK. subject = what this is about, legible in ONE glance. stakes = why a stranger should care within ~2 seconds. speed = how fast the hook lands and what you CUT to get there (no run-up, no greeting, no context-before-payoff). simplicity = the ONE idea, plus what you deliberately left out. Weakest S decides the hook — a hook with three strong S's and no stakes still loses the scroll.
+
+A2. STAKES ARE THE MOST COMMONLY MISSING INGREDIENT. A hook can be visually arresting and still die because nothing is at risk. "Her whole tray is about to tip" is stakes. "She is cooking" is not. State what stands to go wrong, be revealed, be lost, or be won.
+
+A3. THE HOOK IS THREE CHANNELS AT ONCE, NOT ONE. hookText (the on-screen overlay in the first ~2s), hookSpoken (the first words heard), hookVisual (the event seen before anything is read or heard). The feed autoplays MUTED, so text + visual must stop the scroll with no sound at all — and the spoken line must then reward turning sound on. Aim for all three to hook independently; a single-channel hook is a weak hook.
+
+A4. LOCK-IN (≈2-5s) IS WHERE MOST VIDEOS ARE ACTUALLY LOST. The hook buys two seconds; something has to hold the next three before the payoff lands. Name it: an unanswered question, a visible countdown to consequence, a motion not yet completed. Never "they keep watching because it's interesting".
+
+A5. IDENTITY OVER PRODUCT. viewerIdentity = who the viewer gets to BE by watching or sharing (in on the joke, the friend who finds the good stuff, the one who saw it first) — an emotional outcome, never a demographic. "Women 18-34" is a media buy, not a reason to watch.
+
+A6. SHARING IS SELFISH — MAKE THE SHARER LOOK GOOD. sharerPayoff = why posting this flatters the person who posts it. Nobody forwards a video to help the creator; they forward it because it says something good about their taste, humour or judgement. If you cannot answer this, the ideation has no share mechanic and you should change the idea.
+
+A7. FAMILIARITY BEATS ORIGINALITY. A recognizable format re-aimed at a fresh subject outperforms an invented one — the format is the vehicle, the subject is the cargo. Reinvent the SURFACE, keep the proven mechanism. Do not chase novelty for its own sake; novelty that nobody recognizes has to earn attention from zero.
+
+# THE TRANSPLANT LAW (fill transplantPlan on EVERY ideation — this is the line between reusing and copying)
+STEAL THE MECHANISM, INVENT THE SURFACE. You are given blueprints of videos that already worked. Take the ENGINE — the reason attention was held — and build a genuinely new video on top of it. Never rebuild the original's surface.
+
+T1. mechanismTaken — the proven mechanism you are borrowing, stated ABSTRACTLY: "the payoff is withheld until the final half-second", "an authority figure is undercut by a child". If your sentence names a specific prop, brand, person or location, you have described the surface, not the mechanism — go up one level and try again.
+
+T2. surfaceInvented — the subject, setting, props, dialogue and payoff you are building FRESH for this creator. This is the part that must not resemble the source. If the source is a girl reviewing ramen and your idea is a girl reviewing pasta, that is a re-skin and it fails this test: same surface, swapped noun. Change the SITUATION, not the noun.
+
+T3. leftBehind — what you deliberately did NOT take because it was unrepeatable: the original creator's existing audience, their real pet or child, a location nobody else has, a trend window that has closed, plain luck. If the source DNA carries viralMechanics.nonReplicable, treat that list as binding — those are the things that cannot travel, and reaching for one is how a remake fails quietly.
+
+T4. whyNotACopy — one honest line: why someone who saw the original would not call this a copy. If you cannot write that line convincingly, the idea is not different enough. Change it rather than defend it.
+
+WHERE TO AIM: if the source DNA carries viralMechanics.freshAngles, those are directions the mechanism supports that the original never explored — the best starting points for a genuinely new video. Prefer them over re-treading the source's own territory.
+
 # HUMANIZATION LAWS (make every motionPrompt read HUMAN — friend-filmed, not AI-directed)
 These are non-negotiable. A prompt that violates them reads as AI slop no matter how good the idea is.
 1. REACTION, NOT PRESCRIPTION. Never name an expression ("pure disgust", "confident smirk", "intense pleasure", "eyes rolling back", "feigned innocence"). Instead describe what she is REACTING TO and let the feeling emerge; expressions DEVELOP across the beat, they never instant-swap. Write "she catches him looking and her face shifts" — not "she makes a shocked face".
@@ -226,6 +256,7 @@ export function buildSynthesisDigest(dnas: import('../../../shared/contract').Fo
   return dnas.map((d, i) => {
     const wiw = d.whyItWorks;
     const v = d.virality;
+    const vm = d.viralMechanics;
     return [
       `SOURCE ${i + 1} — "${d.title ?? 'untitled'}" [${d.formatType ?? d.archetype ?? 'other'}]${v?.overall != null ? ` (virality ${Math.round(v.overall)})` : ''}`,
       `  hook: ${d.hook?.type ?? '?'} — ${d.hook?.mechanism ?? d.hook?.openingVisual ?? '?'}`,
@@ -234,6 +265,14 @@ export function buildSynthesisDigest(dnas: import('../../../shared/contract').Fo
       `  beat structure: ${d.beats?.length ?? '?'} beats, ${d.pacing?.rhythm ?? d.pacing?.energy ?? 'rhythm n/a'}`,
       v?.strengths?.length ? `  what made it viral: ${v.strengths.join('; ')}` : '',
       wiw?.targetViewer ? `  target viewer: ${wiw.targetViewer}` : '',
+      // The dissection is the most useful thing in a digest whose entire job is "give me
+      // the mechanism, not the video" — replicableCore says what may travel, nonReplicable
+      // says what must be left behind, and freshAngles points somewhere the source never
+      // went. Without these the fusion has to infer transplantability from a plot summary.
+      vm?.primaryDriver ? `  PRIMARY DRIVER (the one thing that made it work): ${vm.primaryDriver}` : '',
+      vm?.replicableCore?.length ? `  TRANSPLANTABLE (reuse these): ${vm.replicableCore.join('; ')}` : '',
+      vm?.nonReplicable?.length ? `  DO NOT REUSE (worked only for the original): ${vm.nonReplicable.join('; ')}` : '',
+      vm?.freshAngles?.length ? `  FRESH ANGLES this mechanism supports: ${vm.freshAngles.join('; ')}` : '',
     ].filter(Boolean).join('\n');
   }).join('\n\n');
 }

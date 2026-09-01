@@ -7,6 +7,10 @@ export const ANALYZE_FIELDS = {
   videoUrl: 'videoUrl',
   /** multipart field: uploaded file */
   video: 'video',
+  /** multipart field: OPTIONAL client-measured ground truth, JSON string.
+   *  See GroundTruthSchema — frame-accurate cuts from ffmpeg and/or a real transcript.
+   *  Omit entirely and behaviour is exactly as before. */
+  groundTruth: 'groundTruth',
 } as const;
 
 export const AUTH_HEADER = 'X-API-Key';

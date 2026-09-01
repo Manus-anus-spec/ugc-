@@ -9,7 +9,13 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "smoke": "tsx scripts/schema-smoke.ts"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p worker/tsconfig.json",
+    "test:unit": "node --import tsx --test tests/*.test.ts",
+    "test:rules": "tsx scripts/compiler-tests.ts",
+    "test:smoke": "tsx scripts/schema-smoke.ts",
+    "test": "npm run typecheck && npm run test:unit && npm run test:rules && npm run test:smoke && npm run test:sql",
+    "smoke": "tsx scripts/schema-smoke.ts",
+    "test:sql": "python3 scripts/sql-check.py"
   },
   "dependencies": {
     "lucide-react": "^0.546.0",

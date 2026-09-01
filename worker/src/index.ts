@@ -4,23 +4,31 @@
  * with real HTTP status codes — never a 200 wrapping an error (fixes N2).
  */
 import type { Env } from './env';
-import { GeminiQuotaError } from './gemini';
+import { GeminiQuotaError, configureGeminiEndpoint } from './gemini';
 import { authenticate } from './auth';
+import { capMessage, countPaidCall } from './spend';
 import { err, handleOptions, json } from './http';
 import { analyze } from './routes/analyze';
-import { generate, generateVariant, getGeneration, listGenerations } from './routes/generate';
+import { generate, generateVariant, getGeneration, listGenerations, patchGeneration } from './routes/generate';
 import {
-  createFormat, deleteFormat, getFormat, getVersion, listFormats, listVersions, reindexFts, updateFormat,
+  createFormat, deleteFormat, getFormat, getFormatSeedance, getVersion, listFormats, listVersions,
+  reindexFts, updateFormat,
 } from './routes/formats';
 import { exportBriefs, exportFormat, exportJson } from './routes/export';
 import { deleteProfile, getProfile, listProfiles, putProfile } from './routes/profiles';
 import { getJob } from './routes/jobs';
 import { backfillTaxonomy } from './routes/admin';
+import { synthesisCoverage } from './routes/coverage';
+import { libraryInsights } from './routes/insights';
+import { rescoreVirality } from './routes/rescore';
 import { qaBeat } from './routes/qa';
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (req.method === 'OPTIONS') return handleOptions(req, env);
+    // Route Gemini through AI Gateway when configured. Idempotent, cheap, and must run
+    // before any handler that may call Gemini.
+    configureGeminiEndpoint(env);
 
     const url = new URL(req.url);
     const seg = url.pathname.split('/').filter(Boolean);
@@ -36,11 +44,17 @@ export default {
 
       // ── analyze ──
       if (m === 'POST' && seg[0] === 'analyze' && seg.length === 1) {
+        // §P2 spend guard. Counted here in the router rather than inside the route so the
+        // two paid endpoints share one implementation and neither can forget it.
+        const cap = await countPaidCall(env, operator, 'analyze');
+        if (!cap.allowed) return err('daily_cap', capMessage('analyze', cap), 429, req, env);
         return await analyze(req, env, ctx);
       }
 
       // ── generate ──
       if (m === 'POST' && seg[0] === 'generate' && seg.length === 1) {
+        const cap = await countPaidCall(env, operator, 'generate');
+        if (!cap.allowed) return err('daily_cap', capMessage('generate', cap), 429, req, env);
         return await generate(req, env, ctx);
       }
       // Internal SELF dispatch: one ideation variant per invocation (own CPU budget).
@@ -49,6 +63,10 @@ export default {
       }
       if (m === 'GET' && seg[0] === 'generations' && seg[1] && seg.length === 2) {
         return await getGeneration(req, env, seg[1]);
+      }
+      // Feedback loop (Phase 3): the operator's verdict on a finished run.
+      if (m === 'PATCH' && seg[0] === 'generations' && seg[1] && seg.length === 2) {
+        return await patchGeneration(req, env, seg[1]);
       }
 
       // ── formats ──
@@ -65,6 +83,11 @@ export default {
         }
         if (id && seg[2] === 'generations' && m === 'GET' && seg.length === 3) {
           return await listGenerations(req, env, id);
+        }
+        // Seedance JSON for the SOURCE video — the copy-with-tweaks path. Pure derivation
+        // from stored DNA: no Gemini call, no cost.
+        if (id && seg[2] === 'seedance' && m === 'GET' && seg.length === 3) {
+          return await getFormatSeedance(req, env, id);
         }
         if (id && seg[2] === 'export' && m === 'GET' && seg.length === 3) {
           return await exportFormat(req, env, id);
@@ -109,6 +132,20 @@ export default {
       // ── admin ──
       if (m === 'POST' && seg[0] === 'admin' && seg[1] === 'reindex-fts' && seg.length === 2) {
         return await reindexFts(req, env);
+      }
+      // Phase 4 coverage telemetry — pure SQL aggregation, no Gemini cost, safe to poll.
+      if (m === 'GET' && seg[0] === 'admin' && seg[1] === 'synthesis-coverage' && seg.length === 2) {
+        return await synthesisCoverage(req, env);
+      }
+      // Research: what the analysed library already knows about hook/retention/payoff.
+      // Pure aggregation in SQLite — no Gemini call, no cost.
+      if (m === 'GET' && seg[0] === 'admin' && seg[1] === 'library-insights' && seg.length === 2) {
+        return await libraryInsights(req, env);
+      }
+      // Rescore stored formats onto the current rubric. Batched, idempotent, and NEVER
+      // automatic — it overwrites scores and spends Gemini money, both operator decisions.
+      if (m === 'POST' && seg[0] === 'admin' && seg[1] === 'rescore-virality' && seg.length === 2) {
+        return await rescoreVirality(req, env, ctx);
       }
       if (m === 'POST' && seg[0] === 'admin' && seg[1] === 'backfill-taxonomy' && seg.length === 2) {
         return await backfillTaxonomy(req, env, ctx);

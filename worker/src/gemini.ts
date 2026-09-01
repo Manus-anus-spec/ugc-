@@ -6,7 +6,32 @@
  *    not a setTimeout that dies with the isolate
  * Structured output: JSON-only responses, schema-enforced (FABLE5-PLAN §4).
  */
-const BASE = 'https://generativelanguage.googleapis.com';
+const GOOGLE_DIRECT = 'https://generativelanguage.googleapis.com';
+
+/** Endpoint override for Cloudflare AI Gateway (2026-09-01).
+ *
+ *  WHY: Gemini geolocates the CALLER, and a Worker's caller is whichever colo served the
+ *  request. From the colo serving this account it refuses outright — 400 FAILED_PRECONDITION
+ *  "User location is not supported" — and it refused the file upload three times through the
+ *  retry ladder, so it is not a flake that backoff can absorb. AI Gateway proxies the call
+ *  from Cloudflare's own infrastructure instead, which changes the geography Google sees.
+ *
+ *  Module-level rather than threaded through every signature: the value comes from env and is
+ *  identical on every request, so per-request state would be ceremony. Set idempotently by
+ *  configureGeminiEndpoint at the top of the router.
+ *
+ *  Unset = direct to Google, exactly as before. */
+let baseOverride: string | null = null;
+
+export function configureGeminiEndpoint(env: { AI_GATEWAY_BASE?: string }): void {
+  const v = env.AI_GATEWAY_BASE?.trim();
+  baseOverride = v ? v.replace(/\/+$/, '') : null;
+}
+
+/** Current Gemini base URL — the gateway when configured, Google directly otherwise. */
+function base(): string {
+  return baseOverride ?? GOOGLE_DIRECT;
+}
 
 /**
  * Quota failures are the #1 real-world outage (Jul 25: Niko blocked all night on a
@@ -35,20 +60,48 @@ function classifyGeminiHttpError(status: number, body: string, context: string):
       'rate_limit',
     );
   }
+  // Gemini geolocates the CALLER, and a Cloudflare Worker's caller is whichever colo served
+  // the request — this account has been served from SIN. From some colos Gemini refuses
+  // outright with a 400. Observed live: 64 formats scored fine, then an entire batch failed
+  // with this, then it worked again minutes later on retry. It is transient and nothing is
+  // wrong with the key, the model, the billing or the video — so say that, because the raw
+  // 400 blob reads like a broken app on a paid run and sends you looking in the wrong place.
+  if (status === 400 && /location is not supported/i.test(body)) {
+    return new GeminiQuotaError(
+      `${context}: Gemini refused this request based on the CALLER'S LOCATION. This is a ` +
+      'Cloudflare edge-routing effect (the Worker egresses from whichever colo served the ' +
+      'request), not a problem with the key, the model, the billing or the video. It is ' +
+      'intermittent — retry in a minute and it usually succeeds from a different colo.',
+      'rate_limit',   // treated as retryable, NOT as a spend cap: it must not burn the fallback key
+    );
+  }
   return new Error(`${context} ${status}: ${body.slice(0, 500)}`);
 }
 
 const RETRY_DELAYS_MS = [2000, 6000];
+/** Location refusals get a longer ladder than a rate limit (2026-09-01).
+ *
+ *  A rate limit clears in seconds. A location refusal is a routing fact, and the only thing
+ *  that changes it within a request is Cloudflare picking a different egress on a later
+ *  attempt — so more attempts spread wider is the only in-request lever. It is genuinely a
+ *  lottery: the structural fixes are Smart Placement and AI Gateway, both of which change
+ *  WHERE the call originates instead of retrying from the same place. This just improves the
+ *  odds while costing nothing when the first attempt succeeds. */
+const LOCATION_RETRY_DELAYS_MS = [1500, 4000, 9000, 15000];
 
 /** Issue a Gemini request; retry transient failures (5xx, rate-limit 429) with backoff. */
 async function geminiRequest(doFetch: () => Promise<Response>, context: string): Promise<Response> {
   let lastError: Error | null = null;
-  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
-    if (attempt > 0) await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt - 1]));
+  let delays = RETRY_DELAYS_MS;
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, delays[attempt - 1]));
     const res = await doFetch();
     if (res.ok) return res;
     const body = await res.text().catch(() => '');
     lastError = classifyGeminiHttpError(res.status, body, context);
+    // A location refusal earns the longer ladder — see LOCATION_RETRY_DELAYS_MS. Swapped on
+    // first sight rather than chosen upfront, because we only learn which failure it is here.
+    if (/location is not supported/i.test(body)) delays = LOCATION_RETRY_DELAYS_MS;
     const transient = res.status >= 500
       || (lastError instanceof GeminiQuotaError && lastError.kind === 'rate_limit');
     if (!transient) throw lastError;
@@ -116,7 +169,7 @@ export async function uploadToGemini(apiKey: string, videoBuffer: ArrayBuffer, m
   combined.set(new Uint8Array(videoBuffer), metaPart.length);
   combined.set(closing, metaPart.length + videoBuffer.byteLength);
 
-  const res = await geminiRequest(() => fetch(`${BASE}/upload/v1beta/files`, {
+  const res = await geminiRequest(() => fetch(`${base()}/upload/v1beta/files`, {
     method: 'POST',
     headers: {
       'x-goog-api-key': apiKey,
@@ -136,7 +189,7 @@ export async function uploadToGemini(apiKey: string, videoBuffer: ArrayBuffer, m
 }
 
 async function fetchFileInfo(apiKey: string, fileName: string, fileUri: string): Promise<GeminiFile> {
-  const res = await fetch(`${BASE}/v1beta/${fileName}`, { headers: { 'x-goog-api-key': apiKey } });
+  const res = await fetch(`${base()}/v1beta/${fileName}`, { headers: { 'x-goog-api-key': apiKey } });
   const data = await res.json() as { uri?: string; videoMetadata?: { videoDuration?: string } };
   return { uri: data.uri ?? fileUri, name: fileName, durationSec: parseDuration(data.videoMetadata?.videoDuration) };
 }
@@ -147,7 +200,7 @@ async function pollUntilActive(apiKey: string, fileName: string, fileUri: string
   let durationSec: number | undefined;
   for (let attempts = 0; state === 'PROCESSING' && attempts < 30; attempts++) {
     await new Promise((r) => setTimeout(r, 3000));
-    const res = await fetch(`${BASE}/v1beta/${fileName}`, { headers: { 'x-goog-api-key': apiKey } });
+    const res = await fetch(`${base()}/v1beta/${fileName}`, { headers: { 'x-goog-api-key': apiKey } });
     const data = await res.json() as { state?: string; uri?: string; videoMetadata?: { videoDuration?: string } };
     state = data.state ?? state;
     uri = data.uri ?? uri;
@@ -159,7 +212,7 @@ async function pollUntilActive(apiKey: string, fileName: string, fileUri: string
 }
 
 export async function deleteGeminiFile(apiKey: string, fileName: string): Promise<void> {
-  await fetch(`${BASE}/v1beta/${fileName}`, {
+  await fetch(`${base()}/v1beta/${fileName}`, {
     method: 'DELETE',
     headers: { 'x-goog-api-key': apiKey },
   }).catch(() => {});
@@ -305,7 +358,7 @@ async function callGeminiJsonOnce(opts: GeminiJsonCallOptions): Promise<GeminiJs
     ? opts.parts
     : [...opts.parts, { text: `Your response MUST be a single JSON object that validates against this JSON Schema — no markdown fences, no commentary:\n${JSON.stringify(opts.jsonSchema)}` }];
 
-  const res = await geminiRequest(() => fetch(`${BASE}/v1beta/models/${opts.model}:streamGenerateContent?alt=sse`, {
+  const res = await geminiRequest(() => fetch(`${base()}/v1beta/models/${opts.model}:streamGenerateContent?alt=sse`, {
     method: 'POST',
     headers: { 'x-goog-api-key': opts.apiKey, 'Content-Type': 'application/json' },
     body: JSON.stringify({

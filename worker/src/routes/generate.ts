@@ -13,8 +13,10 @@
  */
 import { z } from 'zod';
 import {
-  BeatGenerationSchema, CameraAngleSchema, ContinuityLockSchema, CutTransitionSchema,
-  EditPlanSchema, FidelityModeSchema, FirstFrameSourceSchema, GenerationRunSchema, IdeationSchema,
+  AttentionPlanSchema, BeatGenerationSchema, TransplantPlanSchema, CameraAngleSchema, ContinuityLockSchema,
+  CutTransitionSchema,
+  EditPlanSchema, FidelityModeSchema, FirstFrameSourceSchema, GenerationRunSchema,
+  GenerationVerdictPatchSchema, IdeationSchema,
   LipSyncPlanSchema, ModelProfileSchema, SecondaryMotionSchema, ShotSizeSchema,
   VariationStrengthSchema, ViralityForecastSchema,
 } from '../../../shared/schemas';
@@ -27,7 +29,9 @@ import {
   hardStripNsfwForLlm, planSegments, type LintViolation,
 } from '../generate/rules';
 import { NEUTRAL_PROFILE } from '../generate/neutral';
-import { sampleSurpriseSources } from '../generate/surprise';
+import { EXPLORATION_BONUS_MAX, sampleSurpriseSources } from '../generate/surprise';
+import { buildSeedancePrompt } from '../generate/seedance';
+import { checkReality, summariseReality } from '../generate/reality';
 import {
   buildGeneratorInstruction, buildGeneratorRepairPrompt, buildGeneratorUserMessage, buildLintRepairPrompt,
   buildSynthesisDigest, buildSynthesisUserMessage,
@@ -89,6 +93,11 @@ const GeneratedBeatSchema = BeatGenerationSchema.extend({
 // filming fields are REQUIRED on new runs (optional in the stored IdeationSchema
 // only so old rows keep parsing)
 const LlmIdeationExtension = {
+  // Attention plan is REQUIRED of the LLM (Gemini's constrained decoder enforces it) while
+  // the stored IdeationSchema keeps it optional — the standing rule here is that a dropped
+  // field must never 502 a paid run, and every run stored before 2026-08-28 lacks it.
+  attentionPlan: AttentionPlanSchema,
+  transplantPlan: TransplantPlanSchema,
   virality: ViralityForecastSchema,
   editPlan: EditPlanSchema,
   lipSyncPlan: LipSyncPlanSchema,
@@ -227,10 +236,12 @@ async function selectSurpriseFormatIds(
   const { results } = await env.DB.prepare(
     // No LIMIT: a top-N cut left 4 whole archetypes (all sub-60 scores) permanently
     // outside the pool. score²-weighting in the sampler is the quality bias instead.
-    `SELECT id, format_type, virality_score FROM formats
+    `SELECT id, format_type, virality_score,
+            json_extract(dna, '$.viralMechanics.production.aiFeasibility') AS ai_feasibility
+       FROM formats
      WHERE schema_version != '0-legacy' AND virality_score IS NOT NULL
      ORDER BY virality_score DESC`,
-  ).all<{ id: string; format_type: string | null; virality_score: number }>();
+  ).all<{ id: string; format_type: string | null; virality_score: number; ai_feasibility: number | null }>();
   // Don't-repeat memory: the exact ids fused by the last 2 surprise-me runs for this profile.
   const recent = await env.DB.prepare(
     `SELECT json_extract(output, '$.sourceFormatIds') AS ids FROM generations
@@ -241,6 +252,58 @@ async function selectSurpriseFormatIds(
   for (const r of recent.results) {
     try { for (const id of JSON.parse(r.ids ?? '[]') as string[]) exclude.add(id); } catch { /* tolerate old rows */ }
   }
+  // Fusion-quality prior (Phase 3): per-format up/down counts from judged runs.
+  // A format earns credit two ways, because a run reaches it two ways: as one of the
+  // fused sources of a synthesize run (sourceFormatIds), or as the single subject of a
+  // reproduce/adapt run (format_id). Counting only the first would leave every
+  // non-synthesis thumb on the floor. 'shipped' counts as a strong up — the operator
+  // actually published it, which is the best signal available.
+  const verdicts = await env.DB.prepare(
+    `WITH judged AS (
+       SELECT g.verdict AS verdict, j.value AS format_id
+         FROM generations g, json_each(json_extract(g.output, '$.sourceFormatIds')) j
+        WHERE g.verdict IS NOT NULL
+       UNION ALL
+       SELECT g.verdict AS verdict, g.format_id AS format_id
+         FROM generations g
+        WHERE g.verdict IS NOT NULL
+          AND json_extract(g.output, '$.sourceFormatIds') IS NULL
+     )
+     SELECT format_id,
+            SUM(CASE WHEN verdict IN ('up', 'shipped') THEN 1 ELSE 0 END) AS ups,
+            SUM(CASE WHEN verdict = 'down' THEN 1 ELSE 0 END) AS downs
+       FROM judged GROUP BY format_id`,
+  ).all<{ format_id: string; ups: number; downs: number }>();
+  const feedback = new Map(verdicts.results.map((r) => [r.format_id, { ups: r.ups, downs: r.downs }]));
+  if (feedback.size > 0) {
+    const shaped = [...feedback.entries()].map(([id, f]) => `${id.slice(0, 8)}:+${f.ups}/-${f.downs}`);
+    console.log(`surprise ${profileId}: fitness prior active on ${feedback.size} format(s) — ${shaped.join(' ')}`);
+  }
+
+  // Usage counts for the exploration bonus (Phase 4). Only 31 of 169 formats had ever been
+  // fused; score²-weighting alone cannot reach the tail, so a never-drawn format gets a
+  // bounded lift. Same two-ways-in accounting as the fitness query above.
+  const usage = await env.DB.prepare(
+    `WITH used AS (
+       SELECT j.value AS format_id, 'fused' AS how
+         FROM generations g, json_each(json_extract(g.output, '$.sourceFormatIds')) j
+       UNION ALL
+       SELECT g.format_id AS format_id, 'subject' AS how
+         FROM generations g
+        WHERE json_extract(g.output, '$.sourceFormatIds') IS NULL
+     )
+     SELECT format_id,
+            SUM(CASE WHEN how = 'fused'   THEN 1 ELSE 0 END) AS times_fused,
+            SUM(CASE WHEN how = 'subject' THEN 1 ELSE 0 END) AS times_subject
+       FROM used GROUP BY format_id`,
+  ).all<{ format_id: string; times_fused: number; times_subject: number }>();
+  const usageBy = new Map(usage.results.map((r) => [r.format_id, r]));
+  const neverUsed = results.filter((r) => !usageBy.has(r.id)).length;
+  console.log(
+    `surprise ${profileId}: coverage ${results.length - neverUsed}/${results.length} used — ` +
+    `exploration bonus ×${EXPLORATION_BONUS_MAX} on ${neverUsed} never-drawn format(s)`,
+  );
+
   const menu = formatMenu && formatMenu.length > 0 ? new Set(formatMenu) : undefined;
   if (menu) {
     // Persona lane bias — log the split, never silently drop (types stay drawable at ×0.15).
@@ -248,7 +311,15 @@ async function selectSurpriseFormatIds(
     console.log(`surprise ${profileId}: persona lane bias — up-weighted [${types.filter((t) => menu.has(t)).join(', ')}], down-weighted ×0.15 [${types.filter((t) => !menu.has(t)).join(', ')}]`);
   }
   const ids = sampleSurpriseSources(
-    results.map((r) => ({ id: r.id, formatType: r.format_type, score: r.virality_score })), n, exclude,
+    results.map((r) => ({
+      id: r.id, formatType: r.format_type, score: r.virality_score,
+      ...feedback.get(r.id),   // absent = never judged = neutral fitness 0.5
+      timesFused: usageBy.get(r.id)?.times_fused ?? 0,
+      timesSubject: usageBy.get(r.id)?.times_subject ?? 0,
+      // null (never assessed) stays undefined -> neutral weight, so the 169 pre-existing
+      // formats are not penalised for a field that did not exist when they were analysed.
+      ...(r.ai_feasibility !== null ? { aiFeasibility: r.ai_feasibility } : {}),
+    })), n, exclude,
     Math.random, menu,
   );
   console.log(`surprise ${profileId}: drew [${ids.join(', ')}]`);
@@ -353,16 +424,37 @@ async function runSingleVariant(
       : []),
   ];
   let raw: string | null = null;
-  for (const attempt of attempts) {
+  let lastError: unknown = null;
+  for (const [tier, attempt] of attempts.entries()) {
     try {
       raw = await attempt();
       break;
     } catch (e) {
-      if (!isInputBlock(e)) throw e;
-      console.warn(`variant ${variant}: input blocked — escalating sanitization tier`);
+      lastError = e;
+      // BUG FIX (2026-08-29): this used to be `if (!isInputBlock(e)) throw e`, which made
+      // tiers 2 and 3 dead code for every error class EXCEPT an input block. The fallback
+      // MODEL lives in tier 3, so a model-scoped failure — precisely the Gemini geo
+      // rejection that returned 0/3 variants — rethrew before the fallback was ever tried.
+      // Now every tier gets its turn and only the LAST error propagates.
+      //
+      // Spend cap is the one terminal case: every tier uses the same keys and
+      // withGeminiKeyFailover has already walked all of them, so continuing just burns
+      // wall-clock on a paid endpoint to arrive at the same answer.
+      if (e instanceof GeminiQuotaError && e.kind === 'spend_cap') throw e;
+      const why = isInputBlock(e) ? 'input blocked'
+        : e instanceof Error ? e.message.replace(/\s+/g, ' ').slice(0, 140) : String(e);
+      console.warn(`variant ${variant}: tier ${tier + 1}/${attempts.length} failed (${why}) — escalating`);
     }
   }
-  if (raw === null) throw new InputBlocked();
+  if (raw === null) {
+    // Preserve the typed errors the route's classifier depends on: a quota/rate-limit
+    // error keeps its own code, an input block still surfaces as gemini_input_blocked,
+    // and anything else propagates verbatim so the detail array names the real cause.
+    if (lastError instanceof GeminiQuotaError) throw lastError;
+    if (isInputBlock(lastError)) throw new InputBlocked();
+    if (lastError) throw lastError;
+    throw new InputBlocked();
+  }
 
   // Repair calls embed the model's own output, which can itself trip the filter —
   // always sanitize what goes back in.
@@ -488,10 +580,19 @@ async function runGeneration(
     if (quota) {
       return err(failureCode(quota)!, quota instanceof Error ? quota.message : String(quota), 503, req, env);
     }
+    // Say WHY, and stop claiming transience we cannot know. The old copy read "retry, this
+    // is usually transient" for every failure — during the 2026-08-29 geo outage that was
+    // actively misleading: all three variants failed deterministically on the same Google
+    // rejection, and the message sent the operator into a retry loop that could not work.
+    // If every variant died the same way, that identical cause IS the error; surface it.
+    const details = failures
+      .map((f) => (f instanceof Error ? f.message.replace(/\s+/g, ' ').slice(0, 300) : String(f)))
+      .slice(0, 6);
+    const allSame = details.length > 1 && details.every((d) => d === details[0]);
+    const cause = details[0] ? ` — ${allSame ? 'all variants failed identically' : 'first failure'}: ${details[0]}` : '';
     return err('generation_invalid',
-      `only ${good.length}/${IDEATION_COUNT} ideation variants survived (need ≥2) — retry, this is usually transient`,
-      502, req, env,
-      failures.map((f) => (f instanceof Error ? f.message.slice(0, 300) : String(f))).slice(0, 6));
+      `only ${good.length}/${IDEATION_COUNT} ideation variants survived (need ≥2)${cause}`,
+      502, req, env, details);
   }
   if (good.length < IDEATION_COUNT) {
     console.warn(`generate: proceeding with ${good.length}/${IDEATION_COUNT} ideations (failed: ${failures.map((f) => f instanceof Error ? f.message.slice(0, 120) : f).join(' | ')})`);
@@ -515,6 +616,29 @@ async function runGeneration(
     createdAt: now,
     generatorVersion: `${API_VERSION}/${env.GEMINI_MODEL}`,
   };
+  // Derived AFTER enforceIdeation, so the JSON inherits every injector and lint guarantee
+  // the prose motionPrompt has. Built here rather than asked of the LLM precisely so the two
+  // representations cannot disagree.
+  for (const ide of run.ideations) {
+    try {
+      // Reality check runs on the FINAL text — after every injector — because that is what
+      // the operator copies, and an injector can itself introduce a contradiction (a static
+      // default appended to a prompt that already pans).
+      const findings = checkReality(ide, dna);
+      if (findings.length) {
+        ide.realityCheck = findings;
+        console.log(`ideation ${ide.index}: ${summariseReality(findings)}`);
+        for (const f of findings.filter((x) => x.severity === 'blocking')) {
+          console.warn(`  BLOCKING beat ${f.beatIndex} [${f.kind}]: ${f.issue}`);
+        }
+      }
+      ide.seedancePrompt = buildSeedancePrompt(ide, dna, profile);
+    } catch (e) {
+      // A serializer failure must never fail a paid generation — the prose prompts are the
+      // primary output and remain complete without this.
+      console.warn(`seedance prompt build failed for ideation ${ide.index}: ${e instanceof Error ? e.message : e}`);
+    }
+  }
   GenerationRunSchema.parse(run);   // belt-and-braces before persisting
   await env.DB.prepare(
     `INSERT INTO generations (id, format_id, format_version, profile_id, profile_version,
@@ -539,10 +663,62 @@ export async function listGenerations(req: Request, env: Env, formatId: string):
   }, 200, req, env);
 }
 
+/** Verdict columns (0004) live outside the output blob, so every read merges them on.
+ *  Undefined rather than null for absent values — the schema marks them optional. */
+type VerdictRow = { verdict: string | null; verdict_note: string | null; verdict_at: string | null; verdict_ideation: number | null };
+
+function withVerdict(output: string, row: VerdictRow): Record<string, unknown> {
+  const run = JSON.parse(output) as Record<string, unknown>;
+  if (row.verdict) run.verdict = row.verdict;
+  if (row.verdict_note) run.verdictNote = row.verdict_note;
+  if (row.verdict_at) run.verdictAt = row.verdict_at;
+  if (row.verdict_ideation !== null) run.verdictIdeation = row.verdict_ideation;
+  return run;
+}
+
 export async function getGeneration(req: Request, env: Env, id: string): Promise<Response> {
-  const row = await env.DB.prepare('SELECT output FROM generations WHERE id = ?').bind(id).first<{ output: string }>();
+  const row = await env.DB.prepare(
+    'SELECT output, verdict, verdict_note, verdict_at, verdict_ideation FROM generations WHERE id = ?',
+  ).bind(id).first<{ output: string } & VerdictRow>();
   if (!row) return err('not_found', `generation ${id} not found`, 404, req, env);
-  return json(JSON.parse(row.output), 200, req, env);
+  return json(withVerdict(row.output, row), 200, req, env);
+}
+
+/** PATCH /generations/:id — the feedback loop's write side (Phase 3, brief §P1.1).
+ *
+ *  Before this route existed the app could not learn: all 138 live runs sat at
+ *  status='draft' and NO feedback signal had ever been recorded, so the sampler had
+ *  nothing to weight by. The verdict feeds fitness() in the surprise sampler, which
+ *  soft-weights the formats behind a fused run.
+ *
+ *  Idempotent by design: re-thumbing a run OVERWRITES its verdict rather than appending,
+ *  so the operator can change their mind and a double-click cannot inflate the counts.
+ *  `status` is deliberately not touched. */
+export async function patchGeneration(req: Request, env: Env, id: string): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return err('invalid_body', 'body must be JSON', 400, req, env);
+  }
+  const parsed = GenerationVerdictPatchSchema.safeParse(body);
+  if (!parsed.success) {
+    return err('invalid_body', `verdict patch invalid:\n${zodText(parsed.error)}`, 400, req, env);
+  }
+  const { verdict, ideationIndex, note } = parsed.data;
+  const now = new Date().toISOString();
+  // UPDATE … WHERE id = ? reports whether the row existed, so no separate existence read.
+  const res = await env.DB.prepare(
+    `UPDATE generations SET verdict = ?, verdict_note = ?, verdict_at = ?, verdict_ideation = ?
+     WHERE id = ?`,
+  ).bind(verdict, note ?? null, now, ideationIndex ?? null, id).run();
+  if (!res.meta.changes) return err('not_found', `generation ${id} not found`, 404, req, env);
+
+  console.log(`verdict ${id}: ${verdict}${ideationIndex !== undefined ? ` (ideation ${ideationIndex})` : ''}`);
+  const row = await env.DB.prepare(
+    'SELECT output, verdict, verdict_note, verdict_at, verdict_ideation FROM generations WHERE id = ?',
+  ).bind(id).first<{ output: string } & VerdictRow>();
+  return json(withVerdict(row!.output, row!), 200, req, env);
 }
 
 function tryParse(text: string): unknown {

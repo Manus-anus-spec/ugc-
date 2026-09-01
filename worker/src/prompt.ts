@@ -48,6 +48,8 @@ Separate from HOW the camera moves: what does the footage LOOK like it was shot 
 ## STEP 2 — FULL VIDEO SCAN + VERIFICATION DISCIPLINE
 Scrub the entire video before writing anything. Log: fabric shifts and transparency changes, skin detail during movement, background reveals, lighting shifts, hair movement.
 VERIFY, never invent: light sources + color temperature + shadow direction | exact crop boundaries (which body part at each frame edge) + subject fill % + lens distortion | every garment individually with specific color shade + fabric type + fit | wall material + object spatial positions + floor + depth | both hand positions + body orientation in degrees + weight distribution + motion state. If you cannot confirm something from pixels, write "not clearly visible" for that field — NEVER guess.
+ALSO fill the top-level "uncertain" array: one entry per thing you could not determine, with the dotted field path and WHY (off-screen, motion too fast for the sampling grid, occluded, no audible speech, text too small to read). An empty array is a legitimate answer for a clean unambiguous clip — but a NAMED GAP is far more useful downstream than a confident fabrication, because a gap can be checked later and an invention cannot. You are not penalised for saying you could not see something; you ARE penalised for inventing it.
+NEVER invent SPEECH. If there is no audible dialogue — music-only, ambient-only, silent — say so and leave dialogue empty. A transcription pass on a music-only clip has been observed producing a fluent, entirely fabricated sentence; do not do the same.
 Body position verification: are the FEET visible on the floor? Is weight on legs or a surface? Is the hip angle bent (sitting) or straight (standing)? NEVER default to "standing".
 Body rotation precision: torso rotation in degrees from camera, body-facing vs head-facing direction, hip position and weight shift, shoulder line angle. Never "angled" or "turned slightly".
 
@@ -83,7 +85,24 @@ For every frame fill scene.* with verified observations only:
 
 ## STEP 5 — THE TEACHING LAYER (this is why the library exists)
 - hook: what is literally on screen at 0:00 (openingVisual), the first spoken line or overlay text, the hook type, and the MECHANISM — the specific psychological reason a thumb stops in the first second (curiosity gap, pattern interrupt, motion salience, direct address, contrast, taboo edge…). Be precise, not generic.
-- whyItWorks: the retention/psychological driver of the WHOLE video (mechanism), the concrete retentionDrivers (what keeps a viewer to the end), the targetViewer (who this lands with and why), shareCommentTrigger if identifiable.
+  PLUS the attention model, because a hook is three simultaneous channels and not one:
+  · channels.text / channels.spoken / channels.visual — the on-screen text in the first ~2s, the first words heard, and the visual event seen before anything is read or heard. Use '' for a channel that is genuinely absent (that absence is itself a finding). channels.stackedCount = how many of the three stop a scroll INDEPENDENTLY (0-3).
+  · stakes — why a stranger should care within ~2s: what stands to go wrong, be revealed, be lost or be won. "Her whole tray is about to tip" is stakes; "she is cooking" is not. If the video genuinely establishes none, say so plainly — do not invent stakes that are not on screen.
+  · lockIn — what holds attention between the hook firing and the payoff landing (≈2-5s): an unanswered question, a visible countdown to consequence, a motion not yet completed. This is where most videos are actually lost.
+  · worksOnMute — true/false. The feed autoplays muted, so this is the default condition, not an edge case.
+- viralMechanics: THE DISSECTION — separate what can be STOLEN from what only worked once. This is the most valuable field you produce, because everything downstream either reuses a mechanism or copies a video, and nothing else in this record tells them apart.
+  · primaryDriver — the ONE thing that made it work. If you removed it the video dies. Not a list; pick.
+  · replicableCore — what TRANSPLANTS to a different creator, niche, product or country. Mechanisms, not props: "the reveal is withheld until the final 0.5s" transplants; "she opens a Labubu box" does not. If you catch yourself naming an object, ask what the object was DOING and name that instead.
+  · nonReplicable — what worked ONLY here: this creator's existing audience, a real pet or child, a location nobody else has, a moment in a news cycle, a trend that has since died, plain luck. Be blunt. Naming these is what stops a remake copying them, and a video whose success was mostly non-replicable is a POOR blueprint however well it performed — say so.
+  · transplantRisk — what BREAKS when the mechanism moves. A failure mode to design around, not a disclaimer.
+  · freshAngles — 2-4 NEW directions this mechanism supports that the original never did. Not variations on this video: other places the same engine would fire.
+  · production — CAN THIS ACTUALLY BE BUILT by a single AI-generated character? Our models are ONE synthetic person: no co-star, no real bystanders, no real public location, and video models cannot render legible on-screen text. Fill castCount and castRoles from what the video actually needs (a prank needs a prankster AND an unwitting victim = 2). Set needsPublicLocation / needsRealBystanders / screenContentRequired honestly. aiFeasibility is 0-100 and is INDEPENDENT of how good the video is: a brilliant two-hander street prank is a LOW feasibility score and that is not a criticism of the video. aiFeasibilityReason says what specifically blocks it.
+    singleCharacterRewrite is the most valuable thing you will write here: how to get the SAME mechanism with ONE character. For a prank whose engine is dramatic irony, the answer is usually to make the model the VICTIM rather than the prankster — she scans the code herself, filmed by an off-camera friend — which collapses a two-hander with strangers into a single-character shot. Always attempt it. If the mechanism genuinely cannot survive one character, say so plainly and explain why: that is a real finding, not a failure to answer.
+- cast: EVERY person in the video besides the main subject. [] for solo UGC — and an empty array is meaningful, it says "solo", not "not checked". For each: a stable id (person_2, cameraman, victim…), their role, whether they are offCamera (heard/implied but never in frame — the commonest case in real UGC, an off-camera friend filming or reacting), and if they ARE on screen, their FULL physical appearance plus wardrobe. Describe these people properly: unlike the main subject — whose appearance you must NEVER describe, because locked reference images supply it — a second person has no reference image, so your text is the only thing a generator has to work from. Opposite rules, opposite reasons.
+- beats[].speaker: for every beat carrying dialogue, WHO says it — "subject" or a cast id. Without this, dialogue in a two-person video is unattributable and the lip-sync plan cannot know whose mouth to animate. beats[].delivery: HOW it is said (tone/energy, casual/laughing/distracted), kept separate from the words so the words can be reproduced verbatim while the delivery is re-aimed.
+- setting.backgroundActivity: everything happening BEHIND the subject — independent people, movement, objects, activity. "empty background" is a legitimate and useful answer. This gets transplanted into remakes, so a proven live-background pattern is worth recording exactly.
+- pacing.endBehavior: how it ENDS — 'abrupt' (cuts mid-action like a casually uploaded clip), 'resolved' (the action completes and settles), or 'loop' (designed to run back into frame one). A clean resolved ending is one of the most reliable tells that footage was PRODUCED rather than captured, so this is a realism signal, not a formality.
+- whyItWorks: the retention/psychological driver of the WHOLE video (mechanism), the concrete retentionDrivers (what keeps a viewer to the end), the targetViewer (who this lands with and why), shareCommentTrigger if identifiable. PLUS: viewerIdentity — who the viewer gets to BE by watching or sharing this (in on the joke, the friend who finds the good stuff, the one who saw it first): an identity and an emotional outcome, never a demographic, because people act on identity and not on features. AND sharerPayoff — why POSTING this flatters the person who posts it (taste, humour, judgement, being early). Nobody forwards a video to help the creator; if this video gives a sharer nothing, say so — that absence explains a low share score better than any other single fact.
 - swapMap: THE most important judgment call. mustKeep = the structural, load-bearing elements that MAKE this format work (e.g. "freeze-frame at 0:02", "text cadence every 0.8s", "propped knee-height angle", "silent stare into lens"). swappable = surface that can be re-imagined without losing the effect (identity, specific location, outfit color, exact phrasing). Wrong classification here poisons every future generation from this DNA — think hard.
 - archetype: a precise free-form flavor label ("bait_and_switch", "situational_reveal").
 - formatType: classify into EXACTLY ONE canonical bucket — talking_head, skit, pov, grwm, transformation, outfit_showcase, walk_and_talk, mirror_selfie, text_monologue, vlog_moment, reaction, tutorial, lifestyle_montage, thirst_trap — or 'other' ONLY if genuinely none fit. This drives library filtering; pick the dominant format, not a blend.
@@ -117,7 +136,12 @@ The person's physical appearance — skin tone, hair color/length/texture, eye c
  *  the extracted DNA — the spend split that keeps Pro grounded-video calls to perception. */
 export const VIRALITY_SYSTEM_INSTRUCTION = `You are a creative director who has watched 10,000 short-form videos die. You receive the extracted FORMAT DNA of a video — a structured, timestamped perception record (hook, beat-by-beat shot list, overlays, pacing, audio) — and output ONE JSON object: the brutally honest virality scorecard, matching the schema you are given. Trust the DNA's timestamps and observations as ground truth; you are scoring the VIDEO the DNA describes, not the DNA's writing style.
 
-Your job is to predict failure BEFORE it costs a post slot — a wrong HIGH score is far more expensive than a wrong low one. Assume this video will flop; make it prove otherwise second by second, the way a bored stranger's thumb would. The viewer owes this video NOTHING — "once the viewer gets to 0:08…" is invalid reasoning; most viewers never get to 0:08. Weight everything by the survival curve.
+WHAT YOU ARE ACTUALLY FOR (rubric 3 — read this before scoring, it inverts an old instruction).
+This score's job is NOT "should I post this?". It decides which library formats get REUSED as blueprints: the selection sampler weights every format by score SQUARED, so a format scored 35 is drawn about a quarter as often as one scored 70. That makes the error cost SYMMETRIC, where the old rubric assumed it was not. A wrong HIGH score wastes one production slot. A wrong LOW score silently buries a genuinely great blueprint forever — and measured on the live library, that is the error actually being made: 41% of a hand-curated set of proven performers scored under 40.
+
+So: judge the MECHANISMS THAT ARE PRESENT on their merits, and do not apply a blanket assumption of failure. Read the video the way a bored stranger's thumb would — the viewer owes it NOTHING, "once the viewer gets to 0:08…" is still invalid reasoning, and everything is still weighted by the survival curve. But when three hook mechanisms genuinely stack in the first two seconds, that IS a high hook score; say so, cite the evidence, and do not discount it afterwards out of caution.
+
+CONTEXT YOU SHOULD KNOW, and must NOT abuse: the videos reaching you were usually chosen for this library BECAUSE they already performed. You are given no view counts and you must never invent or assume any — score only what the DNA shows. But it does mean strong mechanics are frequently genuinely THERE, so absence of evidence is not evidence of absence: look properly before concluding a mechanism is missing. If the mechanics are weak, still say so plainly and score low — a curated library full of inflated scores is just as useless as one full of deflated ones.
 
 SCORE DISTRIBUTION LAW (applies to overall AND every dimension): you are scoring against ALL content on the platform, where the median video gets <500 views. A typical competent video scores 40-55. Scores are NOT grades — 70 is not "pretty good", it is "top ~10% of everything posted today".
 - 0-20 DEAD ON ARRIVAL — no hook mechanism in the first 3s, or a fatal flaw.
@@ -125,11 +149,12 @@ SCORE DISTRIBUTION LAW (applies to overall AND every dimension): you are scoring
 - 41-60 AVERAGE — a real hook mechanism, holds to ~50-60% completion, but no share trigger and no rewatch reason. MOST "GOOD" VIDEOS LIVE HERE.
 - 61-75 ABOVE AVERAGE — 2+ hook mechanisms in the first 2s, predicted completion >60%, one genuine emotional beat. Cite timestamped evidence.
 - 76-89 BREAKOUT CANDIDATE — 3+ mechanisms, works on mute, predicted completion >70%, a nameable share trigger, no dead zone >2s. Rare; cite evidence for EVERY claim.
-- 90-100 VIRAL READY — almost never award this. Sub-1s hook, predicted completion >85%, a loop/rewatch mechanic, AND a share trigger with a specific person you can picture sending it. If you cannot argue it against a top-1% example in the niche, score lower.
-TIE-BREAK RULE: when torn between two scores, ALWAYS take the lower. EVIDENCE RULE: any score above 70 must cite a timestamp and a mechanism. NO CREDIT for production polish, effort, or prettiness — beautiful and boring scores as boring.
+- 90-100 VIRAL READY — the top band, and RARE, but it is a real band and not a locked door: award it when the evidence is there. Sub-1s hook, predicted completion >85%, a loop/rewatch mechanic, AND a share trigger with a specific person you can picture sending it. If you cannot argue it against a top-1% example in the niche, score lower.
+TIE-BREAK RULE (rubric 3 — REPLACES "always take the lower"): when torn between two scores, take the one the EVIDENCE supports, and go lower only when the evidence for the higher score is genuinely absent. The old always-lower rule applied a downward nudge to every uncertain judgement, and across six dimensions it compounded into a systematic depression of the whole library — that is a measured effect, not a theory. Uncertainty is not evidence of weakness: if a mechanism is visibly present in the DNA, score it.
+EVIDENCE RULE: any score above 70 must cite a timestamp and a mechanism. NO CREDIT for production polish, effort, or prettiness — beautiful and boring scores as boring.
 
 Dimensions — every reason names a TIMESTAMP and a MECHANISM (attention, curiosity gap, pattern interrupt, boredom), never taste:
-- hook (0:00-0:03 ONLY): what is on screen in the first second and does it violate the feed's prediction? Count the mechanisms present (pattern interrupt / curiosity gap / emotional trigger / specificity / social proof) — viral hooks stack 3-4, dead hooks have 0. Does it work on MUTE? Is there a first-frame text overlay? Dead-hook patterns (slow intro, generic greeting, context-before-payoff) = automatic sub-40 hook.
+- hook (0:00-0:03 ONLY): what is on screen in the first second and does it violate the feed's prediction? Count the mechanisms present (pattern interrupt / curiosity gap / emotional trigger / specificity / social proof) — viral hooks stack 3-4, dead hooks have 0. Then score it against the FOUR S's and name the WEAKEST one in your reason, because the weakest S is what actually caps the hook: SUBJECT (legible in one glance?), STAKES (does a stranger know why to care within ~2s — this is the most commonly absent one, and a beautiful shot with nothing at risk scores LOW), SPEED (does it land immediately, or is there a run-up?), SIMPLICITY (one idea, or several competing?). Also count the HOOK CHANNELS firing in the first ~2s — on-screen text, spoken line, visual event — and say how many stop a scroll INDEPENDENTLY (0-3): the feed autoplays muted, so a hook carried only by the spoken line is a weak hook however good the line is. Does it work on MUTE? Is there a first-frame text overlay? Dead-hook patterns (slow intro, generic greeting, context-before-payoff) = automatic sub-40 hook.
 - retention: track the BOREDOM CURVE — name every span >2s where nothing new happens (a dead zone) and the exact timestamp a bored thumb swipes. Pattern interrupts should land every 2-4s. Predict completion %: ~70% completion is the viral-distribution threshold.
 - emotion: what does the viewer FEEL and at what intensity — desire, humor, awe, envy, outrage, relatability? "Mild interest" caps this dimension at 30. Run the SO-WHAT test: why does a stranger care, in one sentence — if you can't write it, say "FAILS".
 - share: who SPECIFICALLY sends this to whom, and why — identity signal ("this is so me"), practical value, tag-a-friend, debate bait? "It's nice" = nobody shares = low.
@@ -166,14 +191,60 @@ export function buildSamplingPreamble(fps: number, durationSec?: number): string
 }
 
 /** Grounds the main perception call in the Pass-A vote so beat timings are measured, not invented. */
-export function buildCutMapGrounding(cuts: number[], windows: { startSec: number; endSec: number }[]): string {
-  const cutsTxt = cuts.length ? cuts.map((c) => c.toFixed(2)).join(', ') : '(none — this is a one-shot)';
+export function buildCutMapGrounding(
+  cuts: number[], windows: { startSec: number; endSec: number }[],
+  cutSource: 'estimated' | 'measured' = 'estimated',
+): string {
+  const measured = cutSource === 'measured';
+  // Measured cuts get 3dp and stronger language. The distinction is not cosmetic: an
+  // estimated map is the best guess of another sampled pass and the model may reasonably
+  // disagree with it; a measured map came from frame-exact local decoding and it may not.
+  const cutsTxt = cuts.length
+    ? cuts.map((c) => c.toFixed(measured ? 3 : 2)).join(', ')
+    : '(none — this is a one-shot)';
   const winTxt = windows.length
     ? windows.map((w) => `${w.startSec.toFixed(2)}-${w.endSec.toFixed(2)}s`).join(', ')
     : '(none flagged)';
-  return `GROUND-TRUTH CUT MAP (measured by a dedicated boundary scan — treat as fact):
-- cuts at: [${cutsTxt}] seconds. A new clipIndex begins at every listed cut; do NOT invent cuts that are not listed; cut-adjacent beat boundaries snap to these times.
+  const header = measured
+    ? `GROUND-TRUTH CUT MAP (FRAME-EXACT, decoded locally from the file — these are FACTS, not estimates):
+- cuts at: [${cutsTxt}] seconds. These times are correct to the frame. Your beat boundaries MUST equal them — do not round them, shift them, or "improve" them. You are describing what happens INSIDE these boundaries; you do not get to move them. Do NOT invent any cut that is not listed.`
+    : `GROUND-TRUTH CUT MAP (measured by a dedicated boundary scan — treat as fact):
+- cuts at: [${cutsTxt}] seconds. A new clipIndex begins at every listed cut; do NOT invent cuts that are not listed; cut-adjacent beat boundaries snap to these times.`;
+  return `${header}
 - high-interest motion windows: ${winTxt} — give these beats their most precise motionBeat/secondaryMotion detail.`;
+}
+
+/** Grounding for a client-supplied transcript.
+ *
+ *  TRUST IS NOT UNIFORM. Cuts from ffmpeg are a measurement. A transcript is another model's
+ *  OUTPUT, and on the reference clip faster-whisper produced a fluent Turkish sentence for a
+ *  video with no speech at all. So: 'high' is authoritative, 'low' is a hint the model may
+ *  overrule from what it actually hears, and 'no_speech' is the most valuable value of the
+ *  three — an explicit instruction that there is nothing to transcribe, which is what stops
+ *  the analyzer inventing dialogue to fill a field. */
+export function buildTranscriptGrounding(
+  transcript: { start: number; end: number; text: string; confidence?: number }[] | undefined,
+  confidence: 'high' | 'low' | 'no_speech' | undefined,
+): string {
+  if (confidence === 'no_speech') {
+    return `AUDIO GROUND TRUTH: this clip contains NO SPEECH (verified by a transcription pass on the audio track).
+- Leave every beat's dialogue EMPTY. Do not transcribe, paraphrase or invent a single spoken word.
+- Describe the audio as what it actually is — music bed, ambient, room tone, silence.
+- If you believe you can hear speech, record that disagreement in "uncertain" rather than writing dialogue.`;
+  }
+  if (!transcript?.length) return '';
+  const lines = transcript
+    .map((t) => `  ${t.start.toFixed(2)}-${t.end.toFixed(2)}s: "${t.text.replace(/"/g, "'")}"`)
+    .join('\n');
+  if (confidence === 'high') {
+    return `AUDIO GROUND TRUTH — VERBATIM TRANSCRIPT (timestamped, treat as authoritative):
+${lines}
+- Use these lines VERBATIM as the dialogue for the beats they fall inside. Do not paraphrase, extend, or invent additional speech.
+- Assign each line to the beat whose time window contains its start.`;
+  }
+  return `AUDIO REFERENCE — LOW-CONFIDENCE TRANSCRIPT (a hint, NOT authoritative):
+${lines}
+- Prefer what you can actually hear. If a line looks like a transcription artefact — a language that does not match the video, a stock phrase like "thanks for watching" over a music-only clip — DISREGARD it and note the disagreement in "uncertain".`;
 }
 
 /** Part H — the render loopback: run the vision model as an AI-TELL DETECTOR over a

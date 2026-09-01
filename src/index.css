@@ -1,5 +1,23 @@
-@import "tailwindcss";
+/* Font @import FIRST: CSS requires @import rules to precede all others, and the
+ * tailwindcss import below expands into rules — leaving this after it produced a
+ * real "@import rules must precede all rules" warning on every build. */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* Tailwind's source scan is BOUNDED to src/ (2026-08-28).
+ *
+ * Tailwind v4 auto-detects sources by walking the project for any non-ignored file, which
+ * includes every .md and .json in the repo. That is a real footgun, and it was caught in
+ * the act: committing FABLE5-BRIEF-diagnosis-2026-08-28.md added a live `.shrink` utility
+ * to the production stylesheet, because the brief contains the word "shrink" (inside the
+ * item-23 hold-body directive quoted there). Prose must not be able to alter shipped CSS.
+ * Bounding the scan also cut 6kB of dead utilities the docs had been contributing
+ * (36.9kB → 30.9kB).
+ *
+ * src/ is the only place classNames live — the worker emits prompts, never markup.
+ *
+ * NOTE: `source(...)` must ride the @import. A standalone `@source "./"` rule is ADDITIVE
+ * and leaves the repo-wide auto-scan in place — verified: the stray rule survived it. */
+@import "tailwindcss" source("./");
 
 /* ── Design system v2: "creative charge" · deep indigo-black canvas, electric accents
      (Power Orange → Hot Magenta → Electric Violet), motion that rewards action.

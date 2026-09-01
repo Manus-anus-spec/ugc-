@@ -1,6 +1,6 @@
 /** Offline smoke test: JSON Schema derivation + fixture validation + platform detect. */
 import { z } from 'zod';
-import { AnalyzerOutputSchema, FormatDnaSchema, ModelProfileSchema, GenerationRunSchema } from '../shared/schemas';
+import { AnalyzerOutputSchema, FormatDnaSchema, ModelProfileSchema, GenerationRunSchema, PerceptionOutputSchema } from '../shared/schemas';
 import { detectPlatform } from '../shared/platform';
 
 // 1. JSON Schema derivation (feeds Gemini responseJsonSchema)
@@ -16,6 +16,19 @@ const beat = {
   action: 'walks into frame, turns to camera', rightHand: 'adjusts hair', leftHand: 'at side',
   cameraMove: 'static', framing: 'waist-up, fills 55%', expressionEnergy: 'playful confidence',
   startsOnCut: true,
+  // v3 filming fidelity — REQUIRED by AnalyzerBeatSchema on every new analysis:
+  shotSize: 'MS', cameraAngle: 'eye',
+  lensFeel: 'rear-cam normal, no distortion at ~1.5m',
+  cutTransition: 'hard',
+  motionBeat: 'hair swings forward as she completes the turn',
+  secondaryMotion: {
+    hair: 'swings forward on the turn, settles over ~0.5s',
+    fabric: 'satin ripples at the hem with the step',
+    softBody: 'natural weight transfer, slight shoulder drop',
+    accessories: 'none',
+  },
+  microExpression: 'single blink as she lands the turn, gaze darts to lens',
+  shotType: 'aroll',
 };
 const frame = {
   frameId: 'clip0-thumbnail', role: 'thumbnail', clipIndex: 0, timestampSec: 0,
@@ -33,7 +46,17 @@ const frame = {
 const fixture = {
   title: 'Elevator outfit-check freeze', archetype: 'outfit_showcase', formatType: 'outfit_showcase',
   tags: ['outfit', 'elevator'],
-  hook: { type: 'visual', openingVisual: 'subject frozen mid-step in elevator', mechanism: 'motion freeze pattern interrupt' },
+  hook: {
+    // attention model (2026-08-28) — optional in the schema, asked for in the prompt
+    channels: {
+      text: 'POV: you forgot the one thing',
+      spoken: 'wait — did I actually leave it?',
+      visual: 'the elevator doors close on her half-turned face',
+      stackedCount: 3,
+    },
+    stakes: 'she is about to be shut in with the door closing on the thing she forgot',
+    lockIn: 'the doors are still closing and she has not turned around yet',
+    worksOnMute: true, type: 'visual', openingVisual: 'subject frozen mid-step in elevator', mechanism: 'motion freeze pattern interrupt' },
   beats: [beat],
   camera: {
     setup: 'propped_on_surface', facing: 'front', phoneVisible: 'no', distance: '~1.5m propped',
@@ -44,12 +67,50 @@ const fixture = {
       motionSignature: 'locked-off propped phone at knee height tilted up 15°, zero shake, subject moves through a static frame',
     },
   },
-  setting: { locationType: 'hotel elevator, mirrored', timeOfDay: 'evening', lighting: 'overhead warm LEDs', keyProps: ['mirror'], colorPalette: 'warm gold + black', mood: 'luxe' },
+  setting: { backgroundActivity: 'empty corridor behind her, doors closing', locationType: 'hotel elevator, mirrored', timeOfDay: 'evening', lighting: 'overhead warm LEDs', keyProps: ['mirror'], colorPalette: 'warm gold + black', mood: 'luxe' },
   wardrobeRole: { role: 'going-out fit', garments: ['satin slip dress'], stylingNotes: 'heels, small bag' },
-  pacing: { totalDurationSec: 8.2, cutCount: 0, isOneShot: true, rhythm: 'single slow take', energy: 'calm-confident' },
-  audio: { kind: 'trending_audio', trendingSoundDependent: true },
+  pacing: {
+    totalDurationSec: 8.2, cutCount: 0, isOneShot: true, rhythm: 'single slow take', energy: 'calm-confident',
+    cutCadenceSec: 8.2, payoffSec: 6, endBehavior: 'abrupt',
+  },
+  audio: {
+    kind: 'trending_audio', trendingSoundDependent: true,
+    beatMap: [{ atSec: 0, kind: 'downbeat' }, { atSec: 6, kind: 'drop' }],
+    syncType: 'motion_on_beat',
+    roomTone: 'elevator hum + faint HVAC, phone-mic close and dry',
+  },
+  loop: { isSeamless: false, mechanism: 'none — ends on the unfreeze' },
+  motionCadence: {
+    fpsFeel: 'native 30fps phone',
+    shutterFeel: 'normal auto shutter, motion blur on the turn',
+    temporalArtifacts: 'none seen',
+    interpolationRisk: 'any frame-interpolated smoothness on the hair swing would betray AI',
+  },
   textOverlays: { present: false, cadence: 'none', placement: 'none', copyStyle: 'none', items: [] },
-  whyItWorks: { mechanism: 'freeze-frame curiosity gap', retentionDrivers: ['await the unfreeze'], targetViewer: 'fashion-adjacent scrollers' },
+  cast: [
+    { id: 'friend', role: 'friend filming', appearance: '', wardrobe: '', offCamera: true },
+  ],
+  viralMechanics: {
+    primaryDriver: 'the freeze withholds the reveal until the unfreeze',
+    replicableCore: ['a promise made in frame one that only resolves at the end'],
+    nonReplicable: ['the mirrored lift interior', 'the creator\'s existing following'],
+    transplantRisk: 'without the mirror the freeze reads as a glitch rather than a choice',
+    freshAngles: ['the same withhold applied to an outfit reveal', 'the same freeze on a doorway'],
+    production: {
+      castCount: 1, castRoles: ['the subject'],
+      needsPublicLocation: false, needsRealBystanders: false, screenContentRequired: false,
+      aiFeasibility: 85,
+      aiFeasibilityReason: 'single character, private interior, no legible screen content',
+      singleCharacterRewrite: 'already single-character — no rewrite needed',
+    },
+  },
+  uncertain: [{ field: 'audio.beatMap[1]', why: 'drop is ambiguous under the music bed' }],
+  whyItWorks: {
+    mechanism: 'freeze-frame curiosity gap', retentionDrivers: ['await the unfreeze'],
+    targetViewer: 'fashion-adjacent scrollers',
+    viewerIdentity: 'the friend who spots the outfit before anyone else does',
+    sharerPayoff: 'sending it says you have an eye for a fit',
+  },
   difficulty: { environment: 2, motion: 1, camera: 1, overall: 2, workarounds: [] },
   swapMap: { mustKeep: ['freeze at 0:02', 'propped knee-height angle'], swappable: ['identity', 'outfit color', 'specific elevator'] },
   contentFlag: { rating: 'sfw', triggers: [] },
@@ -59,6 +120,12 @@ const fixture = {
     realismMarkers: ['sensor noise in shadow areas', 'slightly blown mirror highlights', 'imperfect headroom'],
     antiCinematic: 'no color grade, no cinematic lighting, no shallow depth of field',
     promptAnchor: 'casual amateur iPhone footage propped in an elevator, raw ungraded auto-exposure look, deep focus — NOT cinematic, no film grade',
+    // v3 required on new analyses:
+    colorTempK: '~3000K warm elevator LED',
+    lightingDirection: 'overhead, slightly behind — top-down falloff on the face',
+    practicals: ['recessed ceiling LEDs', 'mirror bounce'],
+    realismTells: ['sensor-noise-in-shadows', 'blown-highlights', 'imperfect-headroom'],
+    promptAnchorShort: 'raw iPhone propped in an elevator, ungraded warm LED, deep focus',
   },
   virality: {
     overall: 58, verdict: 'Competent freeze gimmick with no share trigger — average, not viral.',
@@ -78,8 +145,16 @@ const fixture = {
   characterObservation: { appearance: 'n/a', outfit: 'satin slip dress', vibe: 'confident' },
 };
 const r = AnalyzerOutputSchema.safeParse(fixture);
-if (!r.success) { console.error('FIXTURE FAILED:', r.error.issues.slice(0, 10)); process.exit(1); }
+if (!r.success) { console.error('FIXTURE FAILED:', r.error.issues.slice(0, 20)); process.exit(1); }
 console.log('AnalyzerOutput fixture: VALID');
+
+// 2b. PerceptionOutputSchema is what analyze.ts ACTUALLY validates the Gemini
+// perception call against (AnalyzerOutput minus the virality essay). Assert the same
+// fixture satisfies it, and that its derived JSON Schema survives Gemini's decoder rules.
+const { virality: _virality, ...perceptionFixture } = fixture;
+const pr = PerceptionOutputSchema.safeParse(perceptionFixture);
+if (!pr.success) { console.error('PERCEPTION FIXTURE FAILED:', pr.error.issues.slice(0, 20)); process.exit(1); }
+console.log('PerceptionOutput fixture: VALID');
 
 // 3. Full FormatDna assembles from it the same way analyze.ts does
 const full = FormatDnaSchema.safeParse({

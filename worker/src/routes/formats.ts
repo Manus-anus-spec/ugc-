@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { FormatDnaSchema } from '../../../shared/schemas';
 import type { Env } from '../env';
+import { buildSeedancePromptFromDna } from '../generate/seedance';
 import { err, json, newId, nowIso } from '../http';
 import { SUMMARY_SELECT, formatInsertStatements, ftsSyncStatements, rowToSummary, tagStatements, type FormatRow } from '../db';
 
@@ -160,4 +161,39 @@ export async function getVersion(req: Request, env: Env, id: string, version: nu
   ).bind(id, version).first<{ dna: string; created_at: string }>();
   if (!row) return err('not_found', `format ${id} v${version} not found`, 404, req, env);
   return json({ formatId: id, version, dna: JSON.parse(row.dna), snapshotAt: row.created_at }, 200, req, env);
+}
+
+/** GET /formats/:id/seedance — the Seedance JSON for the SOURCE video itself.
+ *
+ *  The fast-turnaround path: pull the prompt for a video you just analysed, swap a few
+ *  surfaces (background, wardrobe, location) and regenerate. Deliberately separate from the
+ *  ideation path, which invents a new treatment — this one reproduces what the source did,
+ *  which is what `reproduce` fidelity has always been for.
+ *
+ *  Pure derivation from stored DNA: no Gemini call, no cost, safe to hit repeatedly. */
+export async function getFormatSeedance(req: Request, env: Env, id: string): Promise<Response> {
+  const row = await env.DB.prepare('SELECT dna, schema_version FROM formats WHERE id = ?')
+    .bind(id).first<{ dna: string; schema_version: string }>();
+  if (!row) return err('not_found', `format ${id} not found`, 404, req, env);
+  if (row.schema_version === '0-legacy') {
+    return err('legacy_format', 'this row predates structured DNA — re-analyse the video to get a Seedance prompt', 422, req, env);
+  }
+  // LENIENT ON PURPOSE. This route was originally hard-validating, and it 422'd on a real
+  // stored row — which was correct behaviour for a schema bug on my side, and the wrong
+  // behaviour for this endpoint regardless. GET /formats/:id does not validate either, and
+  // buildSeedancePromptFromDna is written entirely in optional chaining with fallbacks for
+  // every field, so a partially-shaped older row degrades to a usable prompt instead of an
+  // error. Refusing to serve a prompt because one nested field is missing is worse than
+  // serving a prompt with one generic line in it.
+  const raw = JSON.parse(row.dna) as unknown;
+  const parsed = FormatDnaSchema.safeParse(raw);
+  return json({
+    formatId: id,
+    // Say so when the row is older than the current contract, rather than pretending.
+    schemaComplete: parsed.success,
+    note: parsed.success
+      ? 'Derived from the analysed source. Attach her reference frame separately; the subject is deliberately not described in text so the refs own her identity.'
+      : 'Derived from an older stored analysis — some fields (cast, background activity, end behaviour) predate the current contract and fall back to generic values. Re-analyse the video for a fully specific prompt.',
+    seedancePrompt: buildSeedancePromptFromDna((parsed.success ? parsed.data : raw) as never),
+  }, 200, req, env);
 }

@@ -5,9 +5,14 @@
  * world, her body (Seedream pass), her voice.
  */
 import { useEffect, useState } from 'react';
-import { Loader2, RotateCcw, Sparkles, User, XCircle } from 'lucide-react';
-import type { FormatSummary, GenerationRun, Ideation, VariationStrength } from '@shared/contract';
-import { generateIdeations, synthesizeIdeations, getGeneration, listFormats, listGenerations, listProfiles } from '../../api';
+import { Loader2, RotateCcw, Send, Sparkles, ThumbsDown, ThumbsUp, User, XCircle } from 'lucide-react';
+import type {
+  FormatSummary, GenerationRun, GenerationVerdict, Ideation, VariationStrength,
+} from '@shared/contract';
+import {
+  generateIdeations, synthesizeIdeations, getGeneration, listFormats, listGenerations, listProfiles,
+  setGenerationVerdict,
+} from '../../api';
 import { ApiRequestError } from '../../api/client';
 import { ArchetypeChip, CopyButton, KV, ScoreRing, Section, ViralityBadge, scoreTier } from '../ui';
 import { BeatPromptCard } from './BeatPromptCard';
@@ -17,6 +22,84 @@ const STRENGTHS: { id: VariationStrength; label: string; hint: string }[] = [
   { id: 'medium', label: 'medium', hint: 'new scenario, same skeleton' },
   { id: 'bold', label: 'bold', hint: 'keep only the mechanism' },
 ];
+
+/** Phase 3 — the feedback loop's UI. Before this, no verdict had ever been recorded on
+ *  any of the 138 live runs, so the sampler had nothing to learn from.
+ *
+ *  The verdict is per RUN (with the judged ideation recorded alongside), because that is
+ *  the unit whose source formats get re-weighted. Optimistic: the thumb lights up
+ *  immediately and rolls back if the request fails — a slow API must not make the
+ *  operator think the click was lost, which is how feedback UIs end up unused. */
+function VerdictBar({ runId, ideationIndex, current, onChange }: {
+  runId: string;
+  ideationIndex: number;
+  current: GenerationVerdict | undefined;
+  onChange: (v: GenerationVerdict | undefined) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+  const [failed, setFailed] = useState<string | null>(null);
+
+  const send = async (verdict: GenerationVerdict) => {
+    const previous = current;
+    setBusy(true); setFailed(null);
+    onChange(verdict);                       // optimistic
+    try {
+      await setGenerationVerdict(runId, verdict, {
+        ideationIndex,
+        ...(note.trim() ? { note: note.trim() } : {}),
+      });
+    } catch (e) {
+      onChange(previous);                    // roll back — never show a verdict that did not persist
+      setFailed(e instanceof ApiRequestError ? `${e.api.code}: ${e.api.error}` : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const OPTIONS: { v: GenerationVerdict; icon: typeof ThumbsUp; label: string; hint: string }[] = [
+    { v: 'up', icon: ThumbsUp, label: 'good', hint: 'worth producing — raises these sources in the next draw' },
+    { v: 'down', icon: ThumbsDown, label: 'weak', hint: 'not worth producing — lowers these sources (never excludes them)' },
+    { v: 'shipped', icon: Send, label: 'shipped', hint: 'actually published — the strongest positive signal' },
+  ];
+
+  return (
+    <div className="rounded border border-hairline bg-raised p-3 space-y-2">
+      <p className="font-mono text-[10px] uppercase tracking-wider text-dim">
+        was this any good? — teaches the surprise-me sampler
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        {OPTIONS.map(({ v, icon: Icon, label, hint }) => (
+          <button
+            key={v}
+            type="button"
+            disabled={busy}
+            title={hint}
+            onClick={() => void send(v)}
+            className={`flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs transition disabled:opacity-50 ${
+              current === v
+                ? 'border-orange bg-orange/15 text-orange'
+                : 'border-hairline text-dim hover:text-cream hover:border-cream/30'
+            }`}
+          >
+            <Icon size={13} />
+            {label}
+          </button>
+        ))}
+        {current && <span className="font-mono text-[10px] text-dim">recorded · ideation {ideationIndex + 1}</span>}
+      </div>
+      <input
+        type="text"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="optional: what worked or failed (sent with the next click)"
+        maxLength={2000}
+        className="w-full rounded border border-hairline bg-base px-2 py-1.5 text-xs placeholder:text-dim/60"
+      />
+      {failed && <p className="text-[11px] text-red-400">verdict not saved — {failed}</p>}
+    </div>
+  );
+}
 
 function IdeationCard({ ideation, active, onPick }: { ideation: Ideation; active: boolean; onPick: () => void }) {
   return (
@@ -142,6 +225,47 @@ function IdeationDetail({ ideation }: { ideation: Ideation }) {
         <KV k="editing" v={ideation.editingNotes} />
       </Section>
 
+      {Array.isArray(ideation.realityCheck) && ideation.realityCheck.length > 0 && (
+        <section className="bg-surface border border-borderline/40 rounded-lg p-4 space-y-2">
+          <p className="font-mono text-[10px] uppercase tracking-wider text-borderline">
+            reality check — read before you spend on a clip
+          </p>
+          <ul className="space-y-1.5">
+            {ideation.realityCheck.map((f, i) => (
+              <li key={i} className="text-xs leading-snug flex gap-2">
+                <span className={`font-mono text-[10px] shrink-0 mt-0.5 ${f.severity === 'blocking' ? 'text-nsfw' : 'text-borderline'}`}>
+                  {f.severity === 'blocking' ? 'BLOCK' : 'WARN'} b{f.beatIndex}
+                </span>
+                <span className="text-cream/85">{f.issue}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-[10px] text-dim leading-snug">
+            BLOCK = physically contradictory, fix before generating. WARN = possible but worth a
+            look — a legible screen isn&apos;t a prompt fault, it&apos;s a compositing instruction.
+          </p>
+        </section>
+      )}
+
+      {ideation.seedancePrompt !== undefined && ideation.seedancePrompt !== null && (
+        <Section title="Seedance 2.0 JSON prompt" defaultOpen={false}>
+          <p className="text-[11px] text-dim mb-2 leading-snug">
+            Derived from this ideation&apos;s enforced beats — same guarantees as the prose prompts
+            (body-hold, secondary-motion cap, ambient, negation pair), just in the shape Seedance takes.
+            Paste as-is; attach her reference frame separately.
+          </p>
+          <div className="flex justify-end mb-1">
+            <CopyButton
+              text={JSON.stringify(ideation.seedancePrompt, null, 2)}
+              label="copy JSON"
+            />
+          </div>
+          <pre className="bg-base border border-hairline rounded p-3 overflow-x-auto font-mono text-[10px] leading-relaxed max-h-96">
+            {JSON.stringify(ideation.seedancePrompt, null, 2)}
+          </pre>
+        </Section>
+      )}
+
       <Section title="QA checklist" defaultOpen={false}>
         {(['nbChecks', 'sdChecks', 'videoChecks'] as const).map((key) => (
           <div key={key} className="mb-2">
@@ -167,6 +291,10 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
   const [run, setRun] = useState<GenerationRun | null>(null);
   const [picked, setPicked] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // The server's per-variant failure list. Previously discarded, which is why diagnosing the
+  // 2026-08-29 geo outage needed a curl: the UI said "usually transient" while the detail
+  // array held the actual Gemini rejection three times over.
+  const [errorDetail, setErrorDetail] = useState<string[]>([]);
   const [history, setHistory] = useState<{ id: string; profileId: string; variationStrength: string; createdAt: string }[]>([]);
 
   useEffect(() => {
@@ -182,7 +310,7 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
   useEffect(() => { if (presetFormatId) setFormatId(presetFormatId); }, [presetFormatId]);
 
   const runWith = async (fn: () => Promise<GenerationRun>) => {
-    setRunning(true); setError(null); setRun(null); setElapsed(0);
+    setRunning(true); setError(null); setErrorDetail([]); setRun(null); setElapsed(0);
     const t0 = Date.now();
     const timer = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
     try {
@@ -191,6 +319,9 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
       setPicked(0);
     } catch (e) {
       setError(e instanceof ApiRequestError ? `${e.api.code}: ${e.api.error}` : String(e));
+      // detail is typed `unknown` on ApiError — narrow it rather than trusting the shape.
+      const d = e instanceof ApiRequestError ? e.api.detail : undefined;
+      setErrorDetail(Array.isArray(d) ? d.map((x) => String(x)) : d ? [String(d)] : []);
     } finally {
       clearInterval(timer);
       setRunning(false);
@@ -307,7 +438,21 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
 
       {error && (
         <div className="bg-surface border border-nsfw/40 rounded-xl p-6 space-y-2">
-          <div className="flex items-center gap-2 text-nsfw"><XCircle size={16} /><span className="font-mono text-xs">{error}</span></div>
+          <div className="flex items-start gap-2 text-nsfw"><XCircle size={16} className="shrink-0 mt-0.5" /><span className="font-mono text-xs">{error}</span></div>
+          {errorDetail.length > 0 && (
+            <details className="text-left" open={errorDetail.length <= 3}>
+              <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-wider text-dim hover:text-cream">
+                {errorDetail.length} failure detail{errorDetail.length > 1 ? 's' : ''} from the server
+              </summary>
+              <ul className="mt-2 space-y-1">
+                {errorDetail.map((d, i) => (
+                  <li key={i} className="font-mono text-[11px] text-dim leading-snug break-words bg-raised border border-hairline rounded p-2">
+                    {d}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           <button onClick={() => void start()} className="inline-flex items-center gap-2 border border-hairline rounded-md px-3 py-1.5 text-sm text-dim hover:text-cream cursor-pointer">
             <RotateCcw size={13} /> retry
           </button>
@@ -329,6 +474,12 @@ export function GenerateView({ presetFormatId }: { presetFormatId: string | null
               <IdeationCard key={i.index} ideation={i} active={picked === i.index} onPick={() => setPicked(i.index)} />
             ))}
           </div>
+          <VerdictBar
+            runId={run.id}
+            ideationIndex={picked}
+            current={run.verdict}
+            onChange={(v) => setRun((r) => (r ? { ...r, verdict: v } : r))}
+          />
           {run.ideations[picked] && <IdeationDetail ideation={run.ideations[picked]} />}
           <p className="text-[10px] font-mono text-dim text-right">
             run {run.id.slice(0, 8)} · {run.generatorVersion} · saved to history

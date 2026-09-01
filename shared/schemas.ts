@@ -19,6 +19,11 @@ export const VideoModelChoiceSchema = z.enum(['kling_3', 'cdance_2']);
 export const VideoFormatSchema = z.enum(['ONE_SHOT', 'MULTI_CLIP']);
 export const VariationStrengthSchema = z.enum(['close', 'medium', 'bold']);
 export const GenerationStatusSchema = z.enum(['draft', 'approved', 'produced']);
+/** Operator feedback on a finished run. A SECOND, INDEPENDENT axis from `status`
+ *  (draft|approved|produced) — the two vocabularies are deliberately not merged, so
+ *  "where is this in the pipeline" and "was it any good" never collide. Stored in its
+ *  own columns (migration 0004), never in the run's output JSON. */
+export const GenerationVerdictSchema = z.enum(['up', 'down', 'shipped']);
 export const DifficultyScoreSchema = z.union([
   z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5),
 ]);
@@ -86,6 +91,18 @@ export const SourceMetaSchema = z.object({
    *  when Gemini ignored our fps request or the numeric gate needed a forced repair). */
   samplingFps: z.number().optional(),
   timingConfidence: z.enum(['high', 'medium', 'low']).optional(),
+  /** PROVENANCE OF THE TIMINGS (2026-08-31). 'measured' = the client supplied frame-exact
+   *  cuts (ffmpeg) and the beat boundaries are those cuts. 'estimated' = derived from a
+   *  sampled Pass A. Absent on rows analysed before this existed.
+   *
+   *  This is not decoration. Beat timings drive per-beat prompts and the retention critique's
+   *  timestamps, and a reader has no other way to tell a frame-exact boundary from a ±1s
+   *  guess. Recording it means the two are never silently mixed. */
+  cutSource: z.enum(['estimated', 'measured']).optional(),
+  /** Whether a client-supplied transcript was used, and how far it was trusted. Recorded
+   *  because a transcript is ANOTHER MODEL'S OUTPUT, not an observation — a hallucinated line
+   *  entering the DNA unmarked would become permanent library ground truth. */
+  transcriptSource: z.enum(['none', 'client_high', 'client_low', 'client_no_speech']).optional(),
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -163,7 +180,28 @@ export const ViralityDimensionSchema = z.object({
   reason: z.string(),               // brutal, pixel-specific justification — never generic praise
 });
 
+/** Which calibration produced a score.
+ *
+ *  WHY THIS MATTERS MORE THAN IT LOOKS: virality_score drives the surprise sampler as
+ *  score², so scores from different rubrics are not interchangeable — mixing them silently
+ *  reweights the whole library.
+ *    '1' — every score produced before 2026-08-28.
+ *    '2' — adds the Four-S hook evaluation.
+ *    '3' — RECALIBRATION. Measured on the live library, rubric 1/2 scored 41% of a
+ *          hand-curated set of proven performers under 40, because the instruction told the
+ *          scorer to assume failure and to break every tie downward. That is the wrong prior
+ *          for a corpus of winners, and it is actively costly: the sampler weights by score²,
+ *          so a wrongly-low score buries a good blueprint. Rubric 3 keeps the absolute
+ *          yardstick, the evidence rule and the no-credit-for-polish rule, and replaces the
+ *          flop prior + always-lower tie-break with evidence-led scoring.
+ *  Rows are rescored EXPLICITLY via POST /admin/rescore-virality, never automatically — the
+ *  operator decides when to spend on it, and this field is what keeps the two calibrations
+ *  distinguishable in the meantime instead of quietly incomparable. */
+export const RUBRIC_VERSION = '3';
+
 export const ViralityScorecardSchema = z.object({
+  /** Absent = rubric '1' (pre-2026-08-28). Never backfilled. */
+  rubricVersion: z.string().optional(),
   overall: z.number(),              // 0-100; 50 = average posted video, 80+ = genuine viral mechanics
   verdict: z.string(),              // ONE brutal sentence — what a no-bullshit editor would say
   dimensions: z.object({
@@ -189,15 +227,156 @@ export const ViralityForecastSchema = z.object({
   boosters: z.array(z.string()),    // what to nail in production to hit the ceiling
 });
 
+/** ATTENTION MODEL (2026-08-28) — the hook as THREE SIMULTANEOUS CHANNELS, not one.
+ *
+ *  `hook.type` is a single enum, which quietly encodes a wrong belief: that a video has one
+ *  hook. The strongest hooks fire text, speech and image at the same instant, each one
+ *  independently capable of stopping the scroll — so a video that "works on mute" and a video
+ *  that "works in a pocket" are different tests and a good hook passes both. Capturing the
+ *  channels separately is what lets the library answer which COMBINATIONS actually score.
+ *
+ *  All optional: 169 formats are already stored without them, and per this repo's standing
+ *  rule the analyzer is ASKED for fields in the prompt while the schema stays lenient, so a
+ *  dropped field can never 502 a paid run. */
+/** BLUEPRINT DISSECTION — what can be STOLEN from this video, and what cannot.
+ *
+ *  The gap this closes: the library recorded, in great detail, WHAT a video did — but never
+ *  separated the part that transplants from the part that only worked once. So "reuse the
+ *  format" and "copy the video" were indistinguishable to the generator, and the safest thing
+ *  it could do was reproduce the surface. That is how you end up a copier instead of a
+ *  trendsetter, and no amount of prompt polish fixes it, because the distinction was never
+ *  captured in the first place.
+ *
+ *  Steal like an artist, made mechanical: take the MECHANISM, invent the SURFACE.
+ *  All optional — 169 formats are already stored without it. */
+export const ViralMechanicsSchema = z.object({
+  /** The ONE thing that actually made it work. If you removed this, it would have died. */
+  primaryDriver: z.string(),
+  /** What TRANSPLANTS to a different creator, niche, product or country. Mechanisms, not
+   *  props: "the reveal is withheld until the last 0.5s" transplants; "she opens a Labubu
+   *  box" does not. */
+  replicableCore: z.array(z.string()),
+  /** What worked ONLY here and cannot be transplanted: this creator's existing fame, a real
+   *  pet or child, a location nobody else has, a moment in a news cycle, a trend that has
+   *  since died, genuine luck. Naming these is what stops the generator copying them. */
+  nonReplicable: z.array(z.string()),
+  /** What BREAKS when the mechanism is moved somewhere else — the failure mode to design
+   *  around, not a disclaimer. */
+  transplantRisk: z.string(),
+  /** NEW directions this mechanism supports that the original never did. The point is a
+   *  fresh video built on a proven engine, not a re-skin of this one. */
+  freshAngles: z.array(z.string()),
+
+  /** CAN WE ACTUALLY BUILD IT? (2026-08-31)
+   *
+   *  Deliberately part of viralMechanics rather than a sibling block: "needs a real
+   *  bystander" is already a nonReplicable fact, and two structures describing the same
+   *  thing drift apart (this repo has the scar — a second copy of the virality rubric in
+   *  routes/admin.ts silently undid a recalibration).
+   *
+   *  WHY IT MATTERS MORE THAN IT LOOKS: virality_score drives the surprise sampler as score²,
+   *  so a high score on a format we physically cannot produce does not merely waste
+   *  attention — it OUTCOMPETES formats we can build. A 62-scoring prank needing a prankster,
+   *  an unwitting stranger and a public location will beat a 55-scoring format we could
+   *  actually shoot. That is the same class of error as a miscalibrated score, wearing a
+   *  different hat. */
+  /** OPTIONAL in storage, REQUIRED in the analyzer prompt — the standing rule in this repo,
+   *  which I broke when first adding this and had to fix on 2026-09-01. `production` shipped
+   *  two days after the rest of viralMechanics, so any format analysed in that window has
+   *  viralMechanics WITHOUT production, and a required nested field made those rows fail
+   *  validation outright. A required field inside an optional parent is still a breaking
+   *  change for anything written in between. The prompt carries a detailed paragraph
+   *  demanding it, which is where the enforcement belongs. */
+  production: z.object({
+    /** How many distinct people must appear. Our models are single AI characters with no
+     *  locked co-star, so anything above 1 is a real constraint, not a detail. */
+    castCount: z.number().int(),
+    castRoles: z.array(z.string()),
+    needsPublicLocation: z.boolean(),
+    needsRealBystanders: z.boolean(),
+    /** Legible on-screen content (a phone screen, a chat, a QR code). i2v models cannot
+     *  render legible text, so these beats need compositing after generation. */
+    screenContentRequired: z.boolean(),
+    /** 0-100: how buildable is this by a SINGLE AI-generated character with no co-star,
+     *  no real bystanders and no real location? Independent of how good the video is. */
+    aiFeasibility: z.number(),
+    aiFeasibilityReason: z.string(),
+    /** THE MOST VALUABLE FIELD HERE. How to get the SAME mechanic with ONE character.
+     *  A rejected format should still leave behind something buildable: "make the model the
+     *  victim — she scans the code herself, filmed by an off-camera friend" collapses a
+     *  two-hander with strangers into a single-character shot. Required, not optional: a
+     *  format we cannot build and cannot rewrite is worth knowing about explicitly. */
+    singleCharacterRewrite: z.string(),
+  }).optional(),
+});
+
+export const HookChannelsSchema = z.object({
+  /** On-screen text in the first ~2s — the overlay a muted viewer reads. '' = none present. */
+  text: z.string().optional(),
+  /** The first spoken words — what a viewer scrolling with sound hears. */
+  spoken: z.string().optional(),
+  /** The visual event itself — what a viewer sees before reading or hearing anything. */
+  visual: z.string().optional(),
+  /** How many of the three independently stop a scroll — expected 0-3. The number that
+   *  matters most in this whole block.
+   *
+   *  NO .min()/.max() ON PURPOSE, though not for the reason it first appears. Numeric
+   *  minimum/maximum are NOT rejected by Gemini: z.number().int() already emits them at
+   *  ±MAX_SAFE_INTEGER, and beats[].index / clipIndex / pacing.cutCount have carried them
+   *  across 169 successful live analyses. The concern is narrower — a TIGHT range is a real
+   *  constraint on constrained decoding rather than a no-op, and this schema is fed to
+   *  Gemini as a responseJsonSchema. Unverified decoding risk on a paid endpoint buys
+   *  nothing here: the range is stated in the prompt, and an out-of-range value is a data
+   *  curiosity while a 400 on every analyze is an outage. Enforced by a test in
+   *  tests/gemini-parsing.test.ts. */
+  stackedCount: z.number().int().optional(),
+});
+
 export const HookSchema = z.object({
   type: z.enum(['visual', 'text', 'question', 'mid_action', 'pattern_interrupt', 'audio']),
   openingVisual: z.string(),        // what is literally on screen at 0:00
   firstLineOrText: z.string().optional(),
   mechanism: z.string(),            // WHY it stops the thumb
   coherenceWithCaption: z.string().optional(),
+  // ── attention model ──
+  channels: HookChannelsSchema.optional(),
+  /** STAKES — why the viewer should care, established inside ~2s. The most commonly missing
+   *  ingredient: a hook can be visually arresting and still lose the scroll because nothing
+   *  is at stake. "Her whole tray is about to tip" is stakes; "she is cooking" is not. */
+  stakes: z.string().optional(),
+  /** LOCK-IN (≈2-5s) — what holds attention AFTER the hook fires and BEFORE the payoff
+   *  lands. The bridge across which most videos are actually lost. */
+  lockIn: z.string().optional(),
+  /** Does the hook survive without sound? A muted-autoplay feed is the default condition. */
+  worksOnMute: z.boolean().optional(),
 });
 
 // ── Beat = the atomic unit of the shot list ──
+/** A person in the source video OTHER than the main subject (2026-08-31).
+ *
+ *  The app had no concept of a second person. Yesterday's feasibility work added
+ *  production.castCount, so we now know a video NEEDS two people — but nothing described
+ *  them, so the scene still could not be built. This is the missing half.
+ *
+ *  Why appearance IS described here, when it is deliberately NEVER described for the main
+ *  subject: the subject's identity comes from locked reference images, and describing her in
+ *  text fights those refs (that is what identityLock and stripIdentityDescriptors exist to
+ *  prevent). A second person has no reference image, so text is the only thing the generator
+ *  has to go on. Opposite rules for opposite reasons. */
+export const CastMemberSchema = z.object({
+  /** Stable id used by beat.speaker — 'subject' is reserved for the main character. */
+  id: z.string(),
+  /** cameraman, friend, interviewer, passerby, victim, shop staff… */
+  role: z.string(),
+  /** Full physical description, since no reference image exists for this person. Empty
+   *  string if they are heard but never seen (an off-camera friend filming). */
+  appearance: z.string(),
+  wardrobe: z.string(),
+  /** True when they never appear in frame — the commonest case in real UGC, and it matters
+   *  because an off-camera person needs no visual generation at all, only a voice. */
+  offCamera: z.boolean().optional(),
+});
+
 export const BeatSchema = z.object({
   index: z.number().int(),
   clipIndex: z.number().int(),      // which cut it belongs to (0 for one-shot)
@@ -210,6 +389,14 @@ export const BeatSchema = z.object({
   framing: z.string(),              // "waist-up, subject fills 60%"
   expressionEnergy: z.string(),     // feeling, not facial muscles
   dialogue: z.string().optional(),
+  /** WHO is speaking — 'subject' or a cast[].id. Optional so pre-2026-08-31 rows parse.
+   *  Without it, dialogue in a two-person video is unattributable, and the lip-sync plan
+   *  cannot know whose mouth to animate — it would default to the model even when the line
+   *  belongs to an off-camera friend. */
+  speaker: z.string().optional(),
+  /** How the line is said — tone/energy, not facial muscles. Kept separate from the words
+   *  so the words can be reproduced verbatim while the delivery is re-aimed at our model. */
+  delivery: z.string().optional(),
   onScreenText: z.string().optional(),
   startsOnCut: z.boolean(),
   // v3 filming fidelity — optional so pre-v3 rows keep parsing; REQUIRED on new
@@ -260,6 +447,12 @@ export const PacingSchema = z.object({
   // v3 — optional for pre-v3 rows:
   cutCadenceSec: z.number().optional(),   // MEDIAN seconds between cuts (numeric twin of rhythm)
   payoffSec: z.number().optional(),       // when the hook's promised payoff actually lands
+  /** HOW IT ENDS (2026-08-31). 'abrupt' = cuts mid-action like a casually uploaded clip;
+   *  'resolved' = lands and settles; 'loop' = designed to run back into frame one.
+   *  A CLEAN, resolved ending is one of the most reliable tells that footage was produced
+   *  rather than captured — and nothing recorded this before, so every remake inherited a
+   *  tidy ending by default. */
+  endBehavior: z.enum(['abrupt', 'resolved', 'loop']).optional(),
 });
 
 export const AudioBeatMapEntrySchema = z.object({
@@ -318,6 +511,11 @@ export const FormatDnaSchema = z.object({
     keyProps: z.array(z.string()),
     colorPalette: z.string(),
     mood: z.string(),
+    /** What is happening BEHIND the subject (2026-08-31): independent people, movement,
+     *  activity. The generator's humanization law 8 already DEMANDS a live background, but
+     *  the analyzer never recorded what the source did — so the generator invented one from
+     *  nothing instead of transplanting a pattern that demonstrably worked. */
+    backgroundActivity: z.string().optional(),
   }),
   wardrobeRole: z.object({          // role, never identity
     role: z.string(),               // "athleisure" | "going-out fit" | "work uniform"
@@ -349,11 +547,41 @@ export const FormatDnaSchema = z.object({
       text: z.string(),
     })),
   }).optional(),
+  /** Everyone in the video BESIDES the main subject (2026-08-31). Empty array is the normal
+   *  case for solo UGC and is meaningful: it says "solo", not "not checked". */
+  cast: z.array(CastMemberSchema).optional(),
+  /** Blueprint dissection (2026-08-29): what transplants vs what only worked once.
+   *  Optional so all 169 stored formats keep parsing; asked for on every new analysis. */
+  viralMechanics: ViralMechanicsSchema.optional(),
+  /** WHAT THE ANALYZER COULD NOT DETERMINE (2026-08-31).
+   *
+   *  The output format used to reward a confident answer for every field, and a schema with
+   *  no way to say "I could not see that" applies quiet pressure to invent one. Measured
+   *  case: a transcription pass on a music-only clip produced a fluent Turkish sentence that
+   *  was never spoken. An explicit place to say "unknown" costs nothing and removes the
+   *  pressure — a named gap is far more useful downstream than a confident fabrication,
+   *  because a gap can be checked and a fabrication cannot.
+   *
+   *  Empty array is a legitimate answer for a clean, well-lit, unambiguous clip. */
+  uncertain: z.array(z.object({
+    field: z.string(),        // dotted path, e.g. "beats[2].dialogue"
+    why: z.string(),          // what blocked it: off-screen, too fast, occluded, no audio
+  })).optional(),
   whyItWorks: z.object({            // the teaching layer — the ~80% that must survive ideation
     mechanism: z.string(),          // retention/psychological driver
     retentionDrivers: z.array(z.string()),
     targetViewer: z.string(),
     shareCommentTrigger: z.string().optional(),
+    /** IDENTITY, not demographics. `targetViewer` answers "who watches this"; this answers
+     *  "who does the viewer get to BE by watching or sharing it". People act on identity and
+     *  emotional outcome, not on features — so an ideation aimed at a demographic reads
+     *  generic while one aimed at an identity lands. */
+    viewerIdentity: z.string().optional(),
+    /** WHY SHARING MAKES THE SHARER LOOK GOOD. The real share mechanic: nobody forwards a
+     *  video to help the creator, they forward it because posting it says something
+     *  flattering about them (funny, in-the-know, tasteful, righteous). Distinct from
+     *  shareCommentTrigger, which is about what prompts the comment. */
+    sharerPayoff: z.string().optional(),
   }),
   difficulty: z.object({
     environment: DifficultyScoreSchema,
@@ -599,6 +827,9 @@ export const BeatGenerationSchema = z.object({
   camera: z.string(),
   expression: z.string(),
   dialogue: z.string().optional(),
+  /** 'subject' or a cast id — mirrors BeatSchema.speaker into the generated beat so the
+   *  production route and lip-sync plan know whose line it is. */
+  speaker: z.string().optional(),
   nbPrompt: z.string(),             // NanoBanana first-frame/still prompt (identity-locked)
   chatgpt2Prompt: z.string().optional(),  // alt image tool, when requested
   sdPrompt: z.string(),             // Seedream delta — MANDATORY, never empty (type-enforced)
@@ -701,6 +932,51 @@ export const LipSyncPlanSchema = z.object({
 });
 
 /** One of the ~3 treatments: keeps whyItWorks + swapMap.mustKeep, reinvents the rest. */
+/** The ideation's explicit answer to "why would a stranger stop, stay, and share this".
+ *
+ *  WHY IT EXISTS: the app was producing competent scene descriptions with no stated
+ *  attention thesis, and nothing forced the generator to name one. A brief that cannot say
+ *  what is at stake, what holds the 2-5s gap, and why sharing flatters the sharer is a brief
+ *  that produces slop. Required of the LLM by the generator prompt; optional on the stored
+ *  IdeationSchema so every run from before 2026-08-28 keeps parsing. */
+export const AttentionPlanSchema = z.object({
+  // ── the Four S's of the hook ──
+  subject: z.string(),        // what this is about, legible in ONE glance
+  stakes: z.string(),         // why a stranger should care within ~2s (most commonly absent)
+  speed: z.string(),          // how the hook lands fast — and what was CUT to get there
+  simplicity: z.string(),     // the single idea, plus what was deliberately left out
+  // ── the three hook channels, because a hook is not one thing ──
+  // The feed autoplays MUTED, so text + visual must carry it with no sound at all, and the
+  // spoken line then has to reward turning sound on.
+  hookText: z.string(),       // on-screen overlay in the first ~2s
+  hookSpoken: z.string(),     // the first words heard
+  hookVisual: z.string(),     // the event seen before anything is read or heard
+  // ── the rest of the attention arc ──
+  lockIn: z.string(),         // what holds attention from the hook to the payoff (≈2-5s)
+  viewerIdentity: z.string(), // who the viewer gets to BE — identity, never a demographic
+  sharerPayoff: z.string(),   // why POSTING this flatters the person who posts it
+});
+
+/** What this ideation TOOK from the source and what it INVENTED — the trendsetter test,
+ *  made explicit and checkable rather than hoped for.
+ *
+ *  Required of the LLM, optional in storage (139 runs predate it). Forcing the generator to
+ *  name its own borrowed mechanism and its own invented surface is what makes the difference
+ *  between reuse and copying legible: if surfaceInvented is thin, the idea IS a re-skin, and
+ *  that is now visible on the card instead of buried in a prompt. */
+export const TransplantPlanSchema = z.object({
+  /** The proven MECHANISM taken from the source — why it works, stated abstractly. */
+  mechanismTaken: z.string(),
+  /** The surface built fresh for this creator: subject, setting, props, dialogue, payoff.
+   *  This is the part that must NOT resemble the source. */
+  surfaceInvented: z.string(),
+  /** What was deliberately LEFT BEHIND because it was unrepeatable — the source's fame,
+   *  its trend window, its specific person or place. */
+  leftBehind: z.string(),
+  /** One honest line: why a viewer who saw the original would not call this a copy. */
+  whyNotACopy: z.string(),
+});
+
 export const IdeationSchema = z.object({
   index: z.number().int(),          // 0..N within the run
   title: z.string(),                // short name of this angle
@@ -711,6 +987,34 @@ export const IdeationSchema = z.object({
    *  theme. Required by the prompt when world.contentPersona is set; optional here so
    *  pre-framework rows and persona-less profiles keep parsing. */
   themeFit: z.string().optional(),
+  /** ATTENTION PLAN (2026-08-28) — the ideation's explicit answer to "why would anyone stop,
+   *  stay, and share this". Required by the generator prompt; optional here so every stored
+   *  run from before this existed keeps parsing.
+   *
+   *  This exists because the app was generating competent scene descriptions with no stated
+   *  attention thesis. A brief that cannot name its own stakes, its lock-in, and why sharing
+   *  flatters the sharer is a brief that produces slop — and until now nothing forced the
+   *  generator to name any of the three. */
+  attentionPlan: AttentionPlanSchema.optional(),
+  transplantPlan: TransplantPlanSchema.optional(),
+  /** Seedance 2.0 structured prompt, DERIVED from this ideation's enforced beats (2026-08-31).
+   *  Server-built, never LLM-written — see worker/src/generate/seedance.ts for why. Stored as
+   *  unknown because its shape is the video tool's contract, not ours, and pinning it here
+   *  would mean a schema migration every time Seedance changes a field name. */
+  seedancePrompt: z.unknown().optional(),
+  /** REALITY CHECK findings (2026-09-01) — does the scene physically make sense?
+   *
+   *  Separate from lint violations on purpose. Lint asks "is this phrased like AI?" and its
+   *  failures route through the rewrite loop. These ask "could this actually happen?", and
+   *  the warnings are for the OPERATOR to judge before spending money on a clip — a legible
+   *  phone screen is not a prompt defect, it is a production instruction (composite it), and
+   *  no rewrite can fix it. */
+  realityCheck: z.array(z.object({
+    beatIndex: z.number().int(),
+    severity: z.enum(['blocking', 'warn']),
+    kind: z.string(),
+    issue: z.string(),
+  })).optional(),
   whyItWorksForProfile: z.string(), // the OG mechanism re-aimed at THIS profile's ICP
   creativeBrief: z.string(),
   videoModel: z.object({ choice: VideoModelChoiceSchema, reason: z.string() }),
@@ -758,6 +1062,22 @@ export const GenerationRunSchema = z.object({
   ideations: z.array(IdeationSchema),
   createdAt: z.string(),
   generatorVersion: z.string(),
+  // ── operator feedback (migration 0004) ──
+  // These live in their own D1 COLUMNS, not inside the stored output blob: the blob is
+  // written once at generation time and a verdict arrives later, so persisting it there
+  // would mean rewriting the run JSON on every thumb. GET /generations/:id merges the
+  // columns onto the response, which is why they are optional here.
+  verdict: GenerationVerdictSchema.optional(),
+  verdictNote: z.string().optional(),
+  verdictAt: z.string().optional(),
+  verdictIdeation: z.number().int().optional(),   // which of the 3 cards was judged
+});
+
+/** PATCH /generations/:id body. `note` is capped so a pasted essay cannot bloat the row. */
+export const GenerationVerdictPatchSchema = z.object({
+  verdict: GenerationVerdictSchema,
+  ideationIndex: z.number().int().min(0).max(50).optional(),
+  note: z.string().max(2000).optional(),
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -791,6 +1111,38 @@ export const JobSchema = z.object({
   error: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
+});
+
+/** CLIENT-MEASURED GROUND TRUTH for POST /analyze (2026-08-31).
+ *
+ *  WHY: Gemini samples video at ~1 frame/sec unless told otherwise and, as
+ *  routes/analyze.ts has documented from the start, "INVENTS every sub-second cut and motion
+ *  timing". The multi-pass design fights that and still landed 0.26-1.29s off on a measured
+ *  test clip. ffmpeg measures cuts exactly, locally, in about a second, for zero tokens.
+ *  Paying a model to estimate something a local tool can measure is the wrong trade.
+ *
+ *  Everything here is OPTIONAL. Send nothing and the pipeline behaves exactly as before.
+ *
+ *  A NOTE ON TRUST, which differs per field: cuts from ffmpeg are a MEASUREMENT and are
+ *  treated as authoritative. A transcript is a MODEL OUTPUT from someone else's model and is
+ *  not — on the brief's own test clip, faster-whisper produced a fluent Turkish sentence for
+ *  a music-only video. So a transcript carries a confidence and can be disregarded, and it is
+ *  always marked as client-supplied in the stored DNA rather than passed off as observed. */
+export const GroundTruthSchema = z.object({
+  /** Frame-accurate cut times in seconds, ascending. From ffmpeg scene-detect. */
+  sceneCuts: z.array(z.number()).optional(),
+  durationSec: z.number().optional(),
+  fps: z.number().optional(),
+  dimensions: z.string().optional(),
+  transcript: z.array(z.object({
+    start: z.number(),
+    end: z.number(),
+    text: z.string(),
+    confidence: z.number().optional(),
+  })).optional(),
+  /** 'no_speech' is a MEANINGFUL value, not an absence: it tells the analyzer there is
+   *  nothing to hear, which is what stops it inventing dialogue. */
+  transcriptConfidence: z.enum(['high', 'low', 'no_speech']).optional(),
 });
 
 export const ApiErrorSchema = z.object({
