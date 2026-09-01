@@ -21,6 +21,10 @@ export interface Env {
   /** Model for the VIRALITY SCORER specifically. Defaults to the Pro fallback, not FAST:
    *  this score decides which blueprints get reused downstream, so it is the wrong place
    *  to economise. Overridable without a code change. */
+  /** Cloudflare AI Gateway base URL, e.g.
+   *  https://gateway.ai.cloudflare.com/v1/<account_id>/<gateway>/google-ai-studio
+   *  Unset = call Google directly. Set it to move the egress off this colo's geography. */
+  AI_GATEWAY_BASE?: string;
   GEMINI_MODEL_SCORER?: string;
   /** Parked preview model id — not used by any code path; kept in [vars] so the primary
    *  can be flipped back to it in one edit if Google widens the preview's regions. */

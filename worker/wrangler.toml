@@ -11,6 +11,18 @@ name = "ugc-api"
 main = "src/index.ts"
 compatibility_date = "2026-07-01"
 
+# SMART PLACEMENT (2026-09-01). By default a Worker runs in the colo nearest the USER — for
+# this account that is Jakarta/Singapore, and Gemini refuses that egress with
+# 400 FAILED_PRECONDITION "User location is not supported", which killed /analyze uploads even
+# after three retries. Smart Placement moves execution to a colo near the BACKEND instead,
+# which changes the geography Google sees.
+#
+# Latency cost is negligible here: every request already spends seconds inside Gemini.
+# NOTE: requires the Workers PAID plan. On the free plan this key is ignored rather than
+# fatal, so it is safe to leave in place either way.
+[placement]
+mode = "smart"
+
 [vars]
 # Pinned from live ListModels 2026-07-21 (best available Pro; avoid "-latest" aliases — traceability).
 # 2026-08-29: PRIMARY moved off the preview model. gemini-3.1-pro-preview was returning

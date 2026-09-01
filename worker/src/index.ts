@@ -4,7 +4,7 @@
  * with real HTTP status codes — never a 200 wrapping an error (fixes N2).
  */
 import type { Env } from './env';
-import { GeminiQuotaError } from './gemini';
+import { GeminiQuotaError, configureGeminiEndpoint } from './gemini';
 import { authenticate } from './auth';
 import { capMessage, countPaidCall } from './spend';
 import { err, handleOptions, json } from './http';
@@ -25,6 +25,9 @@ import { qaBeat } from './routes/qa';
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (req.method === 'OPTIONS') return handleOptions(req, env);
+    // Route Gemini through AI Gateway when configured. Idempotent, cheap, and must run
+    // before any handler that may call Gemini.
+    configureGeminiEndpoint(env);
 
     const url = new URL(req.url);
     const seg = url.pathname.split('/').filter(Boolean);
