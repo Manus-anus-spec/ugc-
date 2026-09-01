@@ -56,6 +56,34 @@ const NEEDS_SECOND_PERSON = /\b(films herself from behind|watches herself walk|t
 const ACTION_VERB = /\b(walks?|turns?|sits?|stands?|reaches?|picks?|puts?|opens?|closes?|laughs?|leans?|steps?|grabs?|drops?|throws?|points?|waves?|nods?|shakes?|bends?|kneels?|jumps?|spins?|drinks?|eats?|bites?|pours?|stirs?|wipes?|tastes?)\b/gi;
 const MIN_SEC_PER_ACTION = 0.6;
 
+// ── OBJECT & PROP PHYSICS ───────────────────────────────────────────────────────────────
+// Character coherence was only half the problem. The bigger failure class is what she DOES
+// to things: an effect with no visible cause, a tool that appears from nowhere, an object
+// that changes hands with no transfer, a mass that moves as if it weighs nothing. Video
+// models render all of that happily and it reads instantly as AI.
+//
+// The generator instruction already carries a PROP-PHYSICS LAW (§4: name the visible nozzle,
+// have the water already running at clip start, never spawn a knife). Nothing enforced it —
+// the same instruction-vs-enforcement gap as the humanization laws.
+
+/** An emitted effect. Each needs a visible physical source in frame. */
+const EMITTER = /\b(pour(?:s|ing)?|spray(?:s|ing)?|splash(?:es|ing)?|sprinkl(?:es|ing)|drip(?:s|ping)?|smok(?:e|ing)|steam(?:s|ing)?|burn(?:s|ing)?|foam(?:s|ing)?|squirt(?:s|ing)?|blow(?:s|ing)? out)\b/i;
+/** Evidence the source IS established: the vessel, opening, or already-active state. */
+const EMITTER_SOURCE = /\b(nozzle|spout|open(?:ed)? (?:bottle|can|carton|tap|jar)|bottle mouth|tap (?:is )?(?:on|running)|already (?:running|pouring|flowing|lit|on)|cut (?:face|side|end)|kettle|jug|hose|straw|lid off|cap off|tilt(?:s|ed|ing)? the)\b/i;
+
+/** Tools that are notorious for materialising mid-shot. */
+const SPAWNABLE_TOOL = /\b(knife|scissors|lighter|match(?:es)?|razor|peeler|corkscrew|spatula|whisk|fork|spoon|straw)\b/i;
+/** Evidence a tool was actually brought into the scene rather than conjured. */
+const TOOL_ESTABLISHED = /\b(picks? up|reaches? for|already (?:holding|in her hand|on the (?:counter|table|board))|grabs?|takes? the|lifts? the|from the drawer|on the board|beside her|in frame)\b/i;
+
+/** Mass-bearing verbs whose weight should be visible in the body. */
+const HEAVY_ACTION = /\b(lifts?|carries|carrying|hauls?|drags?|heaves?|picks? up the (?:crate|box|case|tray|bucket|pan))\b/i;
+/** Evidence the weight is acknowledged. */
+const WEIGHT_CUE = /\b(weight|heavy|strain|braces?|both hands|shifts? her (?:grip|weight)|leans? back|effort|steadies?)\b/i;
+
+/** Object-permanence: a thing leaving her hands should be accounted for. */
+const RELEASE = /\b(puts? (?:it|the|her) \w+ down|sets? (?:it|the) \w+ down|drops?|places? (?:it|the)|hands? (?:it|the) \w+ (?:to|over)|lets? go|slides? (?:it|the) \w+ (?:onto|across))\b/i;
+
 /**
  * Run every coherence check over a finished ideation.
  *
@@ -139,7 +167,54 @@ export function checkReality(ideation: Ideation, dna: FormatDna): RealityFinding
         `dialogue is attributed to "${b.speaker}", who is not the subject and not in the format's cast.`);
     }
 
-    // 7. DIALOGUE WITHOUT A MOUTH. A line assigned to an off-camera person must not be
+    // 7. EMITTED EFFECT WITH NO VISIBLE CAUSE. The single most common physics tell: water
+    //    appearing without a nozzle, smoke without a source. Warning not blocking — the
+    //    source may be established in a neighbouring beat's first frame, which this cannot
+    //    see, and over-blocking a pour would fire on half the cooking library.
+    const em = EMITTER.exec(both);
+    if (em && !EMITTER_SOURCE.test(both)) {
+      push('warn', 'effect-without-cause',
+        `"${em[0]}" happens with no visible source named (nozzle, open bottle, cut face, tap already running) — video models render the effect without its cause, which reads instantly as AI.`);
+    }
+
+    // 8. A TOOL THAT MATERIALISES. Same reasoning, same severity.
+    const tool = SPAWNABLE_TOOL.exec(both);
+    if (tool && !TOOL_ESTABLISHED.test(both)) {
+      push('warn', 'spawned-tool',
+        `a ${tool[0]} is used but never picked up or established in frame — it will appear from nowhere mid-shot.`);
+    }
+
+    // 9. WEIGHT THAT IS NOT ACKNOWLEDGED. A mass lifted with no strain in the body is one of
+    //    the clearest inertia tells, and it is exactly what a video model gets wrong.
+    const heavy = HEAVY_ACTION.exec(both);
+    if (heavy && !WEIGHT_CUE.test(both)) {
+      push('warn', 'weightless-mass',
+        `"${heavy[0]}" with no weight cue (strain, brace, grip shift, both hands) — the object will move as if it weighs nothing.`);
+    }
+
+    // 10. OBJECT PERMANENCE ACROSS BEATS. Something held in one beat and gone in the next,
+    //     with no release named anywhere, is a continuity break the operator will only spot
+    //     after paying for both clips.
+    const prev = ideation.beats?.[i - 1];
+    if (prev) {
+      const prevSrc = typeof prev.sourceBeatIndex === 'number' && prev.sourceBeatIndex >= 0
+        ? dna.beats?.[prev.sourceBeatIndex] : undefined;
+      const heldBefore = [prevSrc?.rightHand, prevSrc?.leftHand]
+        .filter((h): h is string => !!h && HAND_BUSY.test(h) && !HAND_IDLE.test(h));
+      if (heldBefore.length) {
+        const nowSrc = typeof b.sourceBeatIndex === 'number' && b.sourceBeatIndex >= 0
+          ? dna.beats?.[b.sourceBeatIndex] : undefined;
+        const stillHeld = [nowSrc?.rightHand, nowSrc?.leftHand]
+          .some((h) => !!h && HAND_BUSY.test(h) && !HAND_IDLE.test(h));
+        const released = RELEASE.test(`${prev.motionPrompt ?? ''} ${motion}`);
+        if (!stillHeld && !released && nowSrc) {
+          push('warn', 'object-vanished',
+            `something was in her hands last beat ("${heldBefore[0]}") and both hands are free now, with no put-down or hand-off named — the object will vanish between clips.`);
+        }
+      }
+    }
+
+    // 11. DIALOGUE WITHOUT A MOUTH. A line assigned to an off-camera person must not be
     //    lip-synced, and a line with no speaker at all defaults to the model — which is how
     //    an off-camera friend's line ends up coming out of her mouth.
     const offCam = new Set((dna.cast ?? []).filter((c) => c.offCamera).map((c) => c.id));
