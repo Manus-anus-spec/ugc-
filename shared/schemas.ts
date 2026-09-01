@@ -995,6 +995,19 @@ export const IdeationSchema = z.object({
    *  unknown because its shape is the video tool's contract, not ours, and pinning it here
    *  would mean a schema migration every time Seedance changes a field name. */
   seedancePrompt: z.unknown().optional(),
+  /** REALITY CHECK findings (2026-09-01) — does the scene physically make sense?
+   *
+   *  Separate from lint violations on purpose. Lint asks "is this phrased like AI?" and its
+   *  failures route through the rewrite loop. These ask "could this actually happen?", and
+   *  the warnings are for the OPERATOR to judge before spending money on a clip — a legible
+   *  phone screen is not a prompt defect, it is a production instruction (composite it), and
+   *  no rewrite can fix it. */
+  realityCheck: z.array(z.object({
+    beatIndex: z.number().int(),
+    severity: z.enum(['blocking', 'warn']),
+    kind: z.string(),
+    issue: z.string(),
+  })).optional(),
   whyItWorksForProfile: z.string(), // the OG mechanism re-aimed at THIS profile's ICP
   creativeBrief: z.string(),
   videoModel: z.object({ choice: VideoModelChoiceSchema, reason: z.string() }),

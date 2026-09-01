@@ -11,7 +11,8 @@ import { err, handleOptions, json } from './http';
 import { analyze } from './routes/analyze';
 import { generate, generateVariant, getGeneration, listGenerations, patchGeneration } from './routes/generate';
 import {
-  createFormat, deleteFormat, getFormat, getVersion, listFormats, listVersions, reindexFts, updateFormat,
+  createFormat, deleteFormat, getFormat, getFormatSeedance, getVersion, listFormats, listVersions,
+  reindexFts, updateFormat,
 } from './routes/formats';
 import { exportBriefs, exportFormat, exportJson } from './routes/export';
 import { deleteProfile, getProfile, listProfiles, putProfile } from './routes/profiles';
@@ -82,6 +83,11 @@ export default {
         }
         if (id && seg[2] === 'generations' && m === 'GET' && seg.length === 3) {
           return await listGenerations(req, env, id);
+        }
+        // Seedance JSON for the SOURCE video — the copy-with-tweaks path. Pure derivation
+        // from stored DNA: no Gemini call, no cost.
+        if (id && seg[2] === 'seedance' && m === 'GET' && seg.length === 3) {
+          return await getFormatSeedance(req, env, id);
         }
         if (id && seg[2] === 'export' && m === 'GET' && seg.length === 3) {
           return await exportFormat(req, env, id);

@@ -225,6 +225,28 @@ function IdeationDetail({ ideation }: { ideation: Ideation }) {
         <KV k="editing" v={ideation.editingNotes} />
       </Section>
 
+      {Array.isArray(ideation.realityCheck) && ideation.realityCheck.length > 0 && (
+        <section className="bg-surface border border-borderline/40 rounded-lg p-4 space-y-2">
+          <p className="font-mono text-[10px] uppercase tracking-wider text-borderline">
+            reality check — read before you spend on a clip
+          </p>
+          <ul className="space-y-1.5">
+            {ideation.realityCheck.map((f, i) => (
+              <li key={i} className="text-xs leading-snug flex gap-2">
+                <span className={`font-mono text-[10px] shrink-0 mt-0.5 ${f.severity === 'blocking' ? 'text-nsfw' : 'text-borderline'}`}>
+                  {f.severity === 'blocking' ? 'BLOCK' : 'WARN'} b{f.beatIndex}
+                </span>
+                <span className="text-cream/85">{f.issue}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-[10px] text-dim leading-snug">
+            BLOCK = physically contradictory, fix before generating. WARN = possible but worth a
+            look — a legible screen isn&apos;t a prompt fault, it&apos;s a compositing instruction.
+          </p>
+        </section>
+      )}
+
       {ideation.seedancePrompt !== undefined && ideation.seedancePrompt !== null && (
         <Section title="Seedance 2.0 JSON prompt" defaultOpen={false}>
           <p className="text-[11px] text-dim mb-2 leading-snug">

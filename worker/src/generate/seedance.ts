@@ -67,6 +67,86 @@ const secs = (n: number): string => {
   return `${m}:${String(s).padStart(2, '0')}`;
 };
 
+/**
+ * Build the Seedance JSON for the ANALYSED SOURCE VIDEO itself — the fast-turnaround path.
+ *
+ * Distinct from the ideation path on purpose. This one reproduces what the source actually
+ * did, so the operator can pull it, swap a few surfaces (background, wardrobe, location) and
+ * regenerate. That is a legitimate, deliberate mode — the app already has `reproduce`
+ * fidelity for exactly this, and it is a different job from ideation, not a worse one.
+ *
+ * The subject still is not described (locked refs own her identity), and cast members still
+ * are. Everything else comes from the source's own observations rather than a generated
+ * treatment, which is the whole point: this is the video you analysed, not a new idea.
+ */
+export function buildSeedancePromptFromDna(dna: FormatDna): SeedancePrompt {
+  const beats = dna.beats ?? [];
+  const a = dna.aesthetic;
+
+  const people: SeedancePrompt['people'] = [{
+    id: 'subject',
+    role: 'main subject on camera',
+    appearance: 'do not describe — locked reference images are attached',
+    // The SOURCE's wardrobe, since this path is reproducing the source. Swapping it is the
+    // operator's tweak to make, not something to pre-empt here.
+    wardrobe: dna.wardrobeRole?.garments?.join(', ') ?? dna.wardrobeRole?.role ?? 'as seen in the source',
+  }];
+  for (const c of dna.cast ?? []) {
+    people.push({
+      id: c.id,
+      role: c.offCamera ? `${c.role} (OFF CAMERA — voice only, never in frame)` : c.role,
+      appearance: c.offCamera ? 'never visible in frame' : (c.appearance || 'not clearly visible in source'),
+      wardrobe: c.offCamera ? 'not visible' : c.wardrobe,
+    });
+  }
+
+  const scene_events: SeedancePrompt['scene_events'] = beats.map((b) => ({
+    timestamp: secs(b.startSec ?? 0),
+    speaker: b.speaker ?? 'subject',
+    line: b.dialogue?.trim() ? b.dialogue.trim() : null,
+    delivery: b.dialogue?.trim() ? (b.delivery ?? b.expressionEnergy ?? null) : null,
+    action: b.action ?? b.motionBeat ?? '',
+  }));
+
+  const shots: SeedancePrompt['shots'] = beats.map((b) => ({
+    time: `${secs(b.startSec ?? 0)}–${secs(b.endSec ?? 0)}`,
+    action: b.action ?? '',
+    camera_behavior: [b.cameraMove, b.framing].filter(Boolean).join(', ')
+      || dna.camera?.dynamics?.motionSignature || 'static handheld',
+    scene_event_cue: b.dialogue?.trim() ? secs(b.startSec ?? 0) : null,
+  }));
+
+  const endMap: Record<string, string> = {
+    abrupt: 'clip ends abruptly mid-action, like a casually uploaded phone clip — do NOT resolve or settle the shot',
+    resolved: 'the action completes and the shot settles briefly before the cut',
+    loop: 'the final frame runs back into the first — design the end to loop seamlessly',
+  };
+
+  return {
+    format: `9:16 vertical, ~${Math.round(dna.source?.durationSec ?? dna.pacing?.totalDurationSec ?? 0)}s, ${dna.pacing?.isOneShot ? 'one continuous take' : `${(dna.pacing?.cutCount ?? 0) + 1} cuts`}, raw phone capture`,
+    people,
+    environment: [dna.setting?.locationType, dna.setting?.timeOfDay,
+      dna.setting?.keyProps?.length ? `props: ${dna.setting.keyProps.join(', ')}` : '',
+      dna.setting?.colorPalette].filter(Boolean).join(' · '),
+    lighting: [a?.lightingDirection, a?.colorTempK, a?.practicals?.length ? `practicals: ${a.practicals.join(', ')}` : '']
+      .filter(Boolean).join(' · ') || (dna.setting?.lighting ?? 'flat natural light'),
+    color_grading: a?.grade ?? 'raw ungraded phone profile',
+    atmosphere: dna.setting?.mood ?? dna.pacing?.energy ?? 'casual',
+    audio: dna.audio?.roomTone ?? `${dna.audio?.kind ?? 'ambient'} — phone mic`,
+    pacing: [dna.pacing?.rhythm, dna.pacing?.energy].filter(Boolean).join(', '),
+    background_activity: dna.setting?.backgroundActivity
+      ?? 'background alive but secondary — independent movement, nobody looking at camera',
+    scene_events,
+    style: a?.promptAnchor ?? 'Raw casual iPhone footage. NOT cinematic. NOT stabilized.',
+    camera_logic: dna.camera?.dynamics?.motionSignature
+      ?? `${dna.camera?.setup ?? 'handheld phone'}, static with natural micro-shake`,
+    imperfections: [...(a?.realismTells ?? []), ...(a?.realismMarkers ?? [])],
+    shots,
+    end_behavior: endMap[dna.pacing?.endBehavior ?? 'abrupt']!,
+    negative_prompt: [...new Set([...SEEDANCE_NEGATIVES, a?.antiCinematic].filter(Boolean))].join(', '),
+  };
+}
+
 /** Build the Seedance JSON for one ideation. Pure — no I/O, no model call. */
 export function buildSeedancePrompt(
   ideation: Ideation, dna: FormatDna, profile: ModelProfile,

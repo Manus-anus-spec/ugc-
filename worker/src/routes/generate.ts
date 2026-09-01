@@ -31,6 +31,7 @@ import {
 import { NEUTRAL_PROFILE } from '../generate/neutral';
 import { EXPLORATION_BONUS_MAX, sampleSurpriseSources } from '../generate/surprise';
 import { buildSeedancePrompt } from '../generate/seedance';
+import { checkReality, summariseReality } from '../generate/reality';
 import {
   buildGeneratorInstruction, buildGeneratorRepairPrompt, buildGeneratorUserMessage, buildLintRepairPrompt,
   buildSynthesisDigest, buildSynthesisUserMessage,
@@ -620,6 +621,17 @@ async function runGeneration(
   // representations cannot disagree.
   for (const ide of run.ideations) {
     try {
+      // Reality check runs on the FINAL text — after every injector — because that is what
+      // the operator copies, and an injector can itself introduce a contradiction (a static
+      // default appended to a prompt that already pans).
+      const findings = checkReality(ide, dna);
+      if (findings.length) {
+        ide.realityCheck = findings;
+        console.log(`ideation ${ide.index}: ${summariseReality(findings)}`);
+        for (const f of findings.filter((x) => x.severity === 'blocking')) {
+          console.warn(`  BLOCKING beat ${f.beatIndex} [${f.kind}]: ${f.issue}`);
+        }
+      }
       ide.seedancePrompt = buildSeedancePrompt(ide, dna, profile);
     } catch (e) {
       // A serializer failure must never fail a paid generation — the prose prompts are the
